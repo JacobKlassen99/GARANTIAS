@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="104" fill="#1b4332"/>
+  <rect x="36" y="36" width="440" height="440" rx="72" fill="none" stroke="#2d6a4f" stroke-width="6"/>
+  <!-- Land parcel grid & shield -->
+  <g transform="translate(96, 96)">
+    <!-- Document background -->
+    <rect x="24" y="16" width="272" height="320" rx="16" fill="#f8fafc"/>
+    <rect x="24" y="16" width="272" height="60" rx="16" fill="#2d6a4f"/>
+    <!-- Stamp header -->
+    <circle cx="64" cy="46" r="16" fill="#d8f3dc"/>
+    <path d="M56 46l6 6 12-12" stroke="#1b4332" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <line x1="96" y1="46" x2="260" y2="46" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
+    
+    <!-- Land Grid illustration on document -->
+    <rect x="52" y="100" width="216" height="130" rx="8" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="2"/>
+    <path d="M52 165 h216 M160 100 v130 M110 165 v65 M210 100 v65" stroke="#94a3b8" stroke-width="3"/>
+    
+    <!-- Certified Badge / Seal -->
+    <circle cx="160" cy="165" r="28" fill="#52b788" stroke="#1b4332" stroke-width="4"/>
+    <path d="M150 165l7 7 15-15" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+    <!-- Document detail lines -->
+    <line x1="52" y1="256" x2="268" y2="256" stroke="#0f172a" stroke-width="7" stroke-linecap="round"/>
+    <line x1="52" y1="280" x2="220" y2="280" stroke="#64748b" stroke-width="5" stroke-linecap="round"/>
+    <line x1="52" y1="302" x2="180" y2="302" stroke="#94a3b8" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>

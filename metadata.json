@@ -1,0 +1,6 @@
+{
+  "name": "Registro de Garantía de Terrenos",
+  "description": "Sistema administrativo para el registro y control de bienes y parcelas dados en garantía - Asoc. Civil Colonia Chihuahua",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
