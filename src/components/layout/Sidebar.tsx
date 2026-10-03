@@ -70,7 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentSection, onSelectSectio
   ];
 
   return (
-    <aside className="hidden md:flex flex-col w-56 shrink-0 bg-slate-900 text-slate-200 border-r border-slate-800 min-h-[calc(100vh-53px)] select-none">
+    <aside className="hidden md:flex flex-col w-56 shrink-0 bg-slate-900 text-slate-200 border-r border-slate-800 h-full overflow-y-auto select-none">
       {/* Navigation Links */}
       <div className="p-2 space-y-0.5 flex-1">
         <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">

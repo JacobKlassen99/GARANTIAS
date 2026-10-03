@@ -5,6 +5,7 @@ import {
   Plus,
   Eye,
   Printer,
+  Edit2,
   Unlock,
   ChevronLeft,
   ChevronRight,
@@ -19,6 +20,7 @@ import { getGarantias, liberarGarantia } from '../services/backend';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { EmptyState } from '../components/common/EmptyState';
 import { ImpresionGarantia } from './ImpresionGarantia';
+import { EditarGarantiaModal } from '../components/common/EditarGarantiaModal';
 import { formatFecha, formatHectareas } from '../utils/textSearch';
 import { NavSection } from '../components/layout/Sidebar';
 
@@ -33,10 +35,15 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
   const [pageSize] = useState(200);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
 
   // Garantía para imprimir
   const [garantiaParaImprimir, setGarantiaParaImprimir] = useState<Garantia | null>(null);
+
+  // Garantía para editar
+  const [garantiaToEdit, setGarantiaToEdit] = useState<Garantia | null>(null);
 
   // Garantía para ver detalle
   const [garantiaParaVer, setGarantiaParaVer] = useState<Garantia | null>(null);
@@ -45,35 +52,44 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
   const [garantiaToLiberar, setGarantiaToLiberar] = useState<Garantia | null>(null);
   const [isLiberando, setIsLiberando] = useState(false);
 
-  const loadData = async () => {
-    setIsLoading(true);
+  const loadData = async (forceRefresh: boolean = false) => {
+    if (garantias.length === 0 && !hasLoadedOnce) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
     setBackendMessage(null);
+
     try {
       const params: QueryParams = {
         page,
         pageSize,
         search: search.trim() || undefined,
       };
-      const res = await getGarantias(params);
+      const res = await getGarantias(params, forceRefresh);
       setGarantias(Array.isArray(res?.data) ? res.data : []);
       setTotal(typeof res?.total === 'number' ? res.total : 0);
+      setHasLoadedOnce(true);
     } catch {
-      setBackendMessage('No se pudo cargar la información.');
-      setGarantias([]);
-      setTotal(0);
+      if (garantias.length === 0) {
+        setBackendMessage('No se pudo cargar la información.');
+      } else {
+        setBackendMessage('No se pudo actualizar la información.');
+      }
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, [page]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
-    loadData();
+    loadData(false);
   };
 
   const handleConfirmLiberar = async () => {
@@ -82,9 +98,9 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
     try {
       await liberarGarantia(garantiaToLiberar.idGarantia);
       setGarantiaToLiberar(null);
-      loadData();
+      loadData(true);
     } catch (err: any) {
-      alert(err.message || 'Esta función requiere conexión con Google Apps Script.');
+      alert(err.message || 'No se pudo liberar la garantía.');
     } finally {
       setIsLiberando(false);
     }
@@ -105,19 +121,20 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
               Garantías Activas
             </h2>
             <p className="text-[11px] text-slate-500">
-              Hoja: <code className="font-mono text-emerald-800 font-bold">garantias</code> (Relaciones en garantia_lotes y garantia_bienes)
+              Control y seguimiento de operaciones y respaldos vigentes
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={loadData}
-            disabled={isLoading}
-            title="Recargar garantías desde Google Sheets"
-            className="p-1.5 text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded hover:bg-slate-50 transition"
+            onClick={() => loadData(true)}
+            disabled={isLoading || isRefreshing}
+            title="Actualizar garantías desde Google Sheets"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition cursor-pointer disabled:opacity-60"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-700' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin text-emerald-700' : ''}`} />
+            <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
           </button>
 
           <button
@@ -155,24 +172,39 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
               onClick={() => {
                 setSearch('');
                 setPage(1);
-                loadData();
+                loadData(false);
               }}
-              className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700"
+              className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
             >
               Limpiar
             </button>
           )}
         </form>
 
-        <div className="text-[11px] text-slate-600 text-right">
-          Total: <strong className="font-mono text-slate-900">{total}</strong> garantías (200 por página)
+        <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between sm:justify-end">
+          {isRefreshing && (
+            <span className="text-[11px] font-medium text-emerald-800 flex items-center gap-1">
+              <RefreshCw className="w-3 h-3 animate-spin" /> Actualizando datos...
+            </span>
+          )}
+          <span>
+            Total: <strong className="font-mono text-slate-900">{total}</strong> garantías (200 por página)
+          </span>
         </div>
       </div>
 
-      {backendMessage && (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded flex items-start gap-2 text-xs text-amber-800">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <div>{backendMessage}</div>
+      {backendMessage && garantias.length > 0 && (
+        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded flex items-center justify-between text-xs text-amber-800">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{backendMessage}</span>
+          </div>
+          <button
+            onClick={() => loadData(true)}
+            className="font-medium text-amber-900 underline hover:no-underline cursor-pointer"
+          >
+            Reintentar
+          </button>
         </div>
       )}
 
@@ -193,7 +225,32 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal">
-              {Array.isArray(garantias) && garantias.length > 0 ? (
+              {isLoading && !hasLoadedOnce ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-xs text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <RefreshCw className="w-5 h-5 animate-spin text-emerald-800" />
+                      <span className="font-semibold text-slate-700">Cargando garantías...</span>
+                      <span className="text-[11px] text-slate-400">Consultando registros oficiales en Google Sheets</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : backendMessage && garantias.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-xs text-red-600">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <AlertCircle className="w-6 h-6 text-red-500" />
+                      <span className="font-semibold text-slate-800">No se pudo cargar la información.</span>
+                      <button
+                        onClick={() => loadData(true)}
+                        className="mt-1 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 rounded font-medium transition cursor-pointer"
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : Array.isArray(garantias) && garantias.length > 0 ? (
                 garantias.map((garantia) => {
                   const cantLotes = garantia.lotes?.length || 0;
                   const cantBienes = garantia.bienes?.length || 0;
@@ -263,21 +320,28 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                           <button
                             onClick={() => setGarantiaParaVer(garantia)}
                             title="Ver detalles de la garantía"
-                            className="p-1 text-slate-600 hover:text-emerald-800 hover:bg-slate-100 rounded transition"
+                            className="p-1 text-slate-600 hover:text-emerald-800 hover:bg-slate-100 rounded transition cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
                           <button
+                            onClick={() => setGarantiaToEdit(garantia)}
+                            title="Editar garantía"
+                            className="p-1 text-slate-600 hover:text-blue-800 hover:bg-blue-50 rounded transition cursor-pointer"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
                             onClick={() => setGarantiaParaImprimir(garantia)}
                             title="Imprimir Garantía Institucional"
-                            className="p-1 text-emerald-800 hover:text-emerald-950 hover:bg-emerald-50 rounded transition"
+                            className="p-1 text-emerald-800 hover:text-emerald-950 hover:bg-emerald-50 rounded transition cursor-pointer"
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => setGarantiaToLiberar(garantia)}
                             title="Liberar garantía (dejar disponibles los bienes/lotes)"
-                            className="p-1 text-amber-700 hover:text-amber-900 hover:bg-amber-50 rounded transition"
+                            className="p-1 text-amber-700 hover:text-amber-900 hover:bg-amber-50 rounded transition cursor-pointer"
                           >
                             <Unlock className="w-3.5 h-3.5" />
                           </button>
@@ -288,18 +352,18 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="p-0">
-                    <EmptyState
-                      type={search ? 'no-results' : 'backend-required'}
-                      title={search ? 'Sin coincidencias en garantías' : 'No hay garantías activas'}
-                      description={
-                        search
+                  <td colSpan={8} className="py-12 text-center text-xs text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-1.5 max-w-sm mx-auto">
+                      <FileCheck2 className="w-8 h-8 text-slate-300 stroke-[1.5]" />
+                      <span className="font-semibold text-slate-700">
+                        {search ? 'Sin coincidencias en garantías' : 'No hay registros para mostrar.'}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {search
                           ? `No se encontró ninguna garantía con "${search}".`
-                          : 'No se pudo cargar la información o no hay garantías registradas.'
-                      }
-                      onAction={loadData}
-                      actionLabel="Reintentar Consulta"
-                    />
+                          : 'No se encontraron garantías activas registradas en Google Sheets.'}
+                      </span>
+                    </div>
                   </td>
                 </tr>
               )}
@@ -410,6 +474,18 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
         <ImpresionGarantia
           garantia={garantiaParaImprimir}
           onClose={() => setGarantiaParaImprimir(null)}
+        />
+      )}
+
+      {/* MODAL DE EDICIÓN */}
+      {garantiaToEdit && (
+        <EditarGarantiaModal
+          idGarantia={garantiaToEdit.idGarantia}
+          onClose={() => setGarantiaToEdit(null)}
+          onSaved={() => {
+            setGarantiaToEdit(null);
+            loadData();
+          }}
         />
       )}
 

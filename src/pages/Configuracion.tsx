@@ -6,7 +6,6 @@ export const Configuracion: React.FC = () => {
   const [nombreInstitucion, setNombreInstitucion] = useState('ASOC. CIVIL "COLONIA CHIHUAHUA"');
   const [nuevaContrasena, setNuevaContrasena] = useState('');
   const [confirmarContrasena, setConfirmarContrasena] = useState('');
-  const [contrasenaActual, setContrasenaActual] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -42,22 +41,15 @@ export const Configuracion: React.FC = () => {
       return;
     }
 
-    if (nuevaContrasena && !contrasenaActual) {
-      setErrorMessage('Para cambiar la contraseña debe ingresar la contraseña actual.');
-      return;
-    }
-
     setIsSaving(true);
     try {
       await updateConfiguracion({
-        contrasenaActual: contrasenaActual || undefined,
         nuevaContrasena: nuevaContrasena || undefined,
         nombreInstitucion: nombreInstitucion.trim(),
       });
       setSuccessMessage('Configuración actualizada con éxito.');
       setNuevaContrasena('');
       setConfirmarContrasena('');
-      setContrasenaActual('');
     } catch (err: any) {
       setErrorMessage(
         err.message || 'No se pudo actualizar la configuración.'
@@ -138,20 +130,6 @@ export const Configuracion: React.FC = () => {
           <p className="text-[11px] text-slate-500">
             La contraseña se utiliza para autorizar el acceso al sistema. Deje estos campos en blanco si no desea modificarla.
           </p>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Contraseña Actual
-            </label>
-            <input
-              type="password"
-              value={contrasenaActual}
-              onChange={(e) => setContrasenaActual(e.target.value)}
-              placeholder="Ingrese su contraseña actual para autorizar cambios"
-              disabled={isSaving}
-              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700"
-            />
-          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>

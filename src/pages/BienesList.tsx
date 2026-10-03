@@ -15,6 +15,7 @@ import {
   Truck,
   Wrench,
   Package,
+  ShieldCheck,
 } from 'lucide-react';
 import { Bien, Cliente, QueryParams, EstadoRegistro, TipoBien } from '../types';
 import {
@@ -38,18 +39,32 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
   const [bienes, setBienes] = useState<Bien[]>([]);
   const [clientesList, setClientesList] = useState<Cliente[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [fromRecord, setFromRecord] = useState(0);
+  const [toRecord, setToRecord] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(200);
+  const pageSize = 200;
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filtroTipo, setFiltroTipo] = useState<string>('todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
   const [isLoading, setIsLoading] = useState(false);
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Modal Añadir / Editar
   const [isModalOpen, setIsModalOpen] = useState(initialOpenNew);
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Debounce para búsqueda (400ms)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [search]);
 
   // Form Fields
   const [numeroPoliza, setNumeroPoliza] = useState('');
@@ -82,7 +97,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
     }
   }, [initialOpenNew]);
 
-  const loadData = async () => {
+  const loadData = async (targetPage = page, targetSearch = debouncedSearch) => {
     setIsLoading(true);
     setBackendMessage(null);
     try {
@@ -91,18 +106,25 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
       if (filtroEstado !== 'todos') filters.estado = filtroEstado;
 
       const params: QueryParams = {
-        page,
+        page: targetPage,
         pageSize,
-        search: search.trim() || undefined,
+        search: targetSearch.trim() || undefined,
         filters: Object.keys(filters).length > 0 ? filters : undefined,
       };
       const res = await getBienes(params);
-      setBienes(Array.isArray(res?.data) ? res.data : []);
-      setTotal(typeof res?.total === 'number' ? res.total : 0);
+      const items = Array.isArray(res?.data) ? res.data : [];
+      setBienes(items);
+      setTotal(typeof res?.total === 'number' ? res.total : items.length);
+      setTotalPages(typeof res?.totalPages === 'number' ? res.totalPages : 1);
+      setFromRecord(typeof res?.from === 'number' ? res.from : items.length > 0 ? (targetPage - 1) * pageSize + 1 : 0);
+      setToRecord(typeof res?.to === 'number' ? res.to : Math.min(targetPage * pageSize, res?.total || items.length));
     } catch {
       setBackendMessage('No se pudo cargar la información.');
       setBienes([]);
       setTotal(0);
+      setTotalPages(1);
+      setFromRecord(0);
+      setToRecord(0);
     } finally {
       setIsLoading(false);
     }
@@ -118,9 +140,12 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
   };
 
   useEffect(() => {
-    loadData();
+    loadData(page, debouncedSearch);
+  }, [page, debouncedSearch, filtroTipo, filtroEstado]);
+
+  useEffect(() => {
     loadClientes();
-  }, [page, filtroTipo, filtroEstado]);
+  }, []);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,7 +238,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
 
     try {
       const payload: Partial<Bien> = {
-        idBien: editingId || `BIEN-${Date.now()}`,
+        idBien: editingId || undefined,
         numeroPoliza: numeroPoliza.trim(),
         cuentaPropietario: selectedPropietario.cuenta,
         propietario: selectedPropietario.nombre,
@@ -232,8 +257,10 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
       };
 
       await saveBien(payload, isEditing);
+      setSuccessMessage(isEditing ? 'Bien actualizado con éxito.' : 'Bien registrado con éxito.');
+      setTimeout(() => setSuccessMessage(null), 3500);
       handleCloseModal();
-      loadData();
+      loadData(page, debouncedSearch);
     } catch (err: any) {
       setFormError(err.message || 'No se pudo guardar el bien.');
     } finally {
@@ -254,7 +281,9 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
       );
       setBienToToggleLock(null);
       setLockMotivoInput('');
-      loadData();
+      setSuccessMessage(`Bien ${!isCurrentlyLocked ? 'bloqueado' : 'desbloqueado'} con éxito.`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+      loadData(page, debouncedSearch);
     } catch (err: any) {
       alert(err.message || 'No se pudo actualizar el estado del bien.');
     } finally {
@@ -273,15 +302,15 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
     try {
       await deleteBien(bienToDelete.idBien);
       setBienToDelete(null);
-      loadData();
+      setSuccessMessage('Bien eliminado con éxito.');
+      setTimeout(() => setSuccessMessage(null), 3000);
+      loadData(page, debouncedSearch);
     } catch (err: any) {
       alert(err.message || 'No se pudo eliminar el bien.');
     } finally {
       setIsDeleting(false);
     }
   };
-
-  const totalPages = Math.ceil(total / pageSize) || 1;
 
   const renderIconTipo = (tipo: TipoBien) => {
     switch (tipo) {
@@ -309,24 +338,24 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
               Registro de Bienes y Maquinaria
             </h2>
             <p className="text-[11px] text-slate-500">
-              Hoja: <code className="font-mono text-emerald-800 font-bold">bienes</code> (N.º de Póliza es fundamental)
+              Control de vehículos, maquinarias, implementos y pólizas
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={loadData}
+            onClick={() => loadData(page, debouncedSearch)}
             disabled={isLoading}
-            title="Recargar bienes desde Google Sheets"
-            className="p-1.5 text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded hover:bg-slate-50 transition"
+            title="Recargar bienes"
+            className="p-1.5 text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded hover:bg-slate-50 transition cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-700' : ''}`} />
           </button>
 
           <button
             onClick={handleOpenCreate}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded shadow-2xs transition"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded shadow-2xs transition cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>+ Añadir Bien</span>
@@ -334,10 +363,33 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
         </div>
       </div>
 
+      {/* Alertas */}
+      {successMessage && (
+        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded flex items-center gap-2 text-xs text-emerald-900 font-semibold">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{successMessage}</span>
+        </div>
+      )}
+
+      {backendMessage && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded flex items-center justify-between text-xs text-red-800">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{backendMessage}</span>
+          </div>
+          <button
+            onClick={() => loadData(page, debouncedSearch)}
+            className="px-2.5 py-1 text-xs font-semibold text-red-800 hover:text-red-900 bg-red-100 rounded hover:bg-red-200 transition cursor-pointer"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+
       {/* Filtros y Búsqueda */}
       <div className="bg-white p-2.5 rounded border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
         <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <form onSubmit={handleSearchSubmit} className="flex-1 flex items-center gap-2 max-w-md">
+          <div className="flex-1 flex items-center gap-2 max-w-md">
             <div className="relative flex-1">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
               <input
@@ -348,13 +400,16 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700"
               />
             </div>
-            <button
-              type="submit"
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded transition"
-            >
-              Buscar
-            </button>
-          </form>
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
 
           {/* Filtro por tipo de bien */}
           <div className="flex items-center gap-1 text-xs">
@@ -365,7 +420,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                 setFiltroTipo(e.target.value);
                 setPage(1);
               }}
-              className="px-2 py-1 text-xs bg-white border border-slate-300 rounded text-slate-700 focus:outline-none focus:border-emerald-700"
+              className="px-2 py-1 text-xs bg-white border border-slate-300 rounded text-slate-700 focus:outline-none focus:border-emerald-700 cursor-pointer"
             >
               <option value="todos">Todos los tipos</option>
               <option value="Vehículo">Vehículo</option>
@@ -384,7 +439,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                 setFiltroEstado(e.target.value);
                 setPage(1);
               }}
-              className="px-2 py-1 text-xs bg-white border border-slate-300 rounded text-slate-700 focus:outline-none focus:border-emerald-700"
+              className="px-2 py-1 text-xs bg-white border border-slate-300 rounded text-slate-700 focus:outline-none focus:border-emerald-700 cursor-pointer"
             >
               <option value="todos">Todos</option>
               <option value="Disponible">Disponible</option>
@@ -394,17 +449,15 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
           </div>
         </div>
 
-        <div className="text-[11px] text-slate-600 text-right">
-          Total: <strong className="font-mono text-slate-900">{total}</strong> bienes
+        <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between sm:justify-end">
+          {total > 0 && (
+            <span>
+              Mostrando <strong className="font-mono text-slate-900">{fromRecord}–{toRecord}</strong> de{' '}
+              <strong className="font-mono text-slate-900">{total}</strong>
+            </span>
+          )}
         </div>
       </div>
-
-      {backendMessage && (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded flex items-start gap-2 text-xs text-amber-800">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <div>{backendMessage}</div>
-        </div>
-      )}
 
       {/* TABLA COMPACTA DE BIENES */}
       <div className="bg-white border border-slate-200 rounded shadow-2xs overflow-hidden">
@@ -584,12 +637,17 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
           <div>
             Página <strong className="text-slate-900">{page}</strong> de{' '}
             <strong className="text-slate-900">{totalPages}</strong>
+            {total > 0 && (
+              <span className="ml-2 text-slate-500 hidden sm:inline">
+                ({fromRecord}–{toRecord} de {total})
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1 || isLoading}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <ChevronLeft className="w-3 h-3" />
               <span>Anterior</span>
@@ -597,7 +655,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages || isLoading}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <span>Siguiente</span>
               <ChevronRight className="w-3 h-3" />

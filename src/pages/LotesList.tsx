@@ -36,17 +36,33 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
   const [lotes, setLotes] = useState<Lote[]>([]);
   const [clientesList, setClientesList] = useState<Cliente[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [fromRecord, setFromRecord] = useState(0);
+  const [toRecord, setToRecord] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(200);
+  const pageSize = 200;
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Modal Añadir / Editar
   const [isModalOpen, setIsModalOpen] = useState(initialOpenNew);
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Debounce para búsqueda (400ms)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [search]);
 
   // Form Fields
   const [numeroLote, setNumeroLote] = useState('');
@@ -75,31 +91,52 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
     }
   }, [initialOpenNew]);
 
-  const loadData = async () => {
-    setIsLoading(true);
+  const loadData = async (
+    targetPage = page,
+    targetSearch = debouncedSearch,
+    forceRefresh = false
+  ) => {
+    if (lotes.length === 0 && !hasLoadedOnce) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
     setBackendMessage(null);
+
     try {
       const params: QueryParams = {
-        page,
+        page: targetPage,
         pageSize,
-        search: search.trim() || undefined,
+        search: targetSearch.trim() || undefined,
         filters: filtroEstado !== 'todos' ? { estado: filtroEstado } : undefined,
       };
-      const res = await getLotes(params);
-      setLotes(Array.isArray(res?.data) ? res.data : []);
-      setTotal(typeof res?.total === 'number' ? res.total : 0);
+      const res = await getLotes(params, forceRefresh);
+      const items = Array.isArray(res?.data) ? res.data : [];
+      setLotes(items);
+      setTotal(typeof res?.total === 'number' ? res.total : items.length);
+      setTotalPages(typeof res?.totalPages === 'number' ? res.totalPages : 1);
+      setFromRecord(typeof res?.from === 'number' ? res.from : items.length > 0 ? (targetPage - 1) * pageSize + 1 : 0);
+      setToRecord(typeof res?.to === 'number' ? res.to : Math.min(targetPage * pageSize, res?.total || items.length));
+      setHasLoadedOnce(true);
     } catch {
-      setBackendMessage('No se pudo cargar la información.');
-      setLotes([]);
-      setTotal(0);
+      if (lotes.length === 0) {
+        setBackendMessage('No se pudo cargar la información.');
+        setTotal(0);
+        setTotalPages(1);
+        setFromRecord(0);
+        setToRecord(0);
+      } else {
+        setBackendMessage('No se pudo actualizar la información.');
+      }
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
-  const loadClientes = async () => {
+  const loadClientes = async (forceRefresh = false) => {
     try {
-      const res = await getClientes({ page: 1, pageSize: 1000 });
+      const res = await getClientes({ page: 1, pageSize: 1000 }, forceRefresh);
       setClientesList(Array.isArray(res?.data) ? res.data : []);
     } catch {
       setClientesList([]);
@@ -107,15 +144,12 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
   };
 
   useEffect(() => {
-    loadData();
-    loadClientes();
-  }, [page, filtroEstado]);
+    loadData(page, debouncedSearch, false);
+  }, [page, debouncedSearch, filtroEstado]);
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setPage(1);
-    loadData();
-  };
+  useEffect(() => {
+    loadClientes(false);
+  }, []);
 
   const handleOpenCreate = () => {
     setIsEditing(false);
@@ -199,7 +233,7 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
 
     try {
       const payload: Partial<Lote> = {
-        idLote: editingId || `LOT-${Date.now()}`,
+        idLote: editingId || undefined,
         numeroLote: numeroLote.trim(),
         cuentaPropietario: selectedPropietario.cuenta,
         propietario: selectedPropietario.nombre,
@@ -214,8 +248,10 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
       };
 
       await saveLote(payload, isEditing);
+      setSuccessMessage(isEditing ? 'Lote actualizado con éxito.' : 'Lote creado con éxito.');
+      setTimeout(() => setSuccessMessage(null), 3500);
       handleCloseModal();
-      loadData();
+      loadData(page, debouncedSearch);
     } catch (err: any) {
       setFormError(err.message || 'No se pudo guardar el lote.');
     } finally {
@@ -236,7 +272,9 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
       );
       setLoteToToggleLock(null);
       setLockMotivoInput('');
-      loadData();
+      setSuccessMessage(`Lote ${!isCurrentlyLocked ? 'bloqueado' : 'desbloqueado'} con éxito.`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+      loadData(page, debouncedSearch);
     } catch (err: any) {
       alert(err.message || 'No se pudo actualizar el estado del lote.');
     } finally {
@@ -255,15 +293,15 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
     try {
       await deleteLote(loteToDelete.idLote);
       setLoteToDelete(null);
-      loadData();
+      setSuccessMessage('Lote eliminado con éxito.');
+      setTimeout(() => setSuccessMessage(null), 3000);
+      loadData(page, debouncedSearch);
     } catch (err: any) {
       alert(err.message || 'No se pudo eliminar el lote.');
     } finally {
       setIsDeleting(false);
     }
   };
-
-  const totalPages = Math.ceil(total / pageSize) || 1;
 
   return (
     <div className="space-y-3">
@@ -278,24 +316,25 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
               Registro de Lotes y Parcelas
             </h2>
             <p className="text-[11px] text-slate-500">
-              Hoja: <code className="font-mono text-emerald-800 font-bold">lotes</code> (El estado "EN GARANTÍA" se calcula automáticamente)
+              Control de parcelas, superficies y estado de disponibilidad
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={loadData}
-            disabled={isLoading}
-            title="Recargar lotes desde Google Sheets"
-            className="p-1.5 text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded hover:bg-slate-50 transition"
+            onClick={() => loadData(page, debouncedSearch, true)}
+            disabled={isLoading || isRefreshing}
+            title="Actualizar lotes desde Google Sheets"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition cursor-pointer disabled:opacity-60"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-700' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin text-emerald-700' : ''}`} />
+            <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
           </button>
 
           <button
             onClick={handleOpenCreate}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded shadow-2xs transition"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded shadow-2xs transition cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>+ Añadir Lote</span>
@@ -303,10 +342,33 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
         </div>
       </div>
 
+      {/* Alertas */}
+      {successMessage && (
+        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded flex items-center gap-2 text-xs text-emerald-900 font-semibold">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{successMessage}</span>
+        </div>
+      )}
+
+      {backendMessage && lotes.length > 0 && (
+        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded flex items-center justify-between text-xs text-amber-800">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{backendMessage}</span>
+          </div>
+          <button
+            onClick={() => loadData(page, debouncedSearch, true)}
+            className="font-medium text-amber-900 underline hover:no-underline cursor-pointer"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+
       {/* Filtros y Búsqueda */}
       <div className="bg-white p-2.5 rounded border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
         <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <form onSubmit={handleSearchSubmit} className="flex-1 flex items-center gap-2 max-w-md">
+          <div className="flex-1 flex items-center gap-2 max-w-md">
             <div className="relative flex-1">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
               <input
@@ -317,13 +379,16 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700"
               />
             </div>
-            <button
-              type="submit"
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded transition"
-            >
-              Buscar
-            </button>
-          </form>
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
 
           {/* Filtro por estado administrativo */}
           <div className="flex items-center gap-1 text-xs">
@@ -334,7 +399,7 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
                 setFiltroEstado(e.target.value);
                 setPage(1);
               }}
-              className="px-2 py-1 text-xs bg-white border border-slate-300 rounded text-slate-700 focus:outline-none focus:border-emerald-700"
+              className="px-2 py-1 text-xs bg-white border border-slate-300 rounded text-slate-700 focus:outline-none focus:border-emerald-700 cursor-pointer"
             >
               <option value="todos">Todos</option>
               <option value="Disponible">Disponible</option>
@@ -344,17 +409,20 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
           </div>
         </div>
 
-        <div className="text-[11px] text-slate-600 text-right">
-          Total: <strong className="font-mono text-slate-900">{total}</strong> lotes
+        <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between sm:justify-end">
+          {isRefreshing && (
+            <span className="text-[11px] font-medium text-emerald-800 flex items-center gap-1">
+              <RefreshCw className="w-3 h-3 animate-spin" /> Actualizando datos...
+            </span>
+          )}
+          {total > 0 && (
+            <span>
+              Mostrando <strong className="font-mono text-slate-900">{fromRecord}–{toRecord}</strong> de{' '}
+              <strong className="font-mono text-slate-900">{total}</strong>
+            </span>
+          )}
         </div>
       </div>
-
-      {backendMessage && (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded flex items-start gap-2 text-xs text-amber-800">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <div>{backendMessage}</div>
-        </div>
-      )}
 
       {/* TABLA COMPACTA DE LOTES */}
       <div className="bg-white border border-slate-200 rounded shadow-2xs overflow-hidden">
@@ -365,17 +433,47 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 w-24">N.º Lote</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Propietario Actual</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Encargado (Comprador)</th>
-                <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-right w-24">Superficie</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Ubicación</th>
-                <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-center w-24">Garantía</th>
+                <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-right w-24">Total (ha)</th>
+                <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-right w-28">En Garantía</th>
+                <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-right w-28">Disponible</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-center w-24">Estado</th>
                 <th className="py-1.5 px-3 font-bold text-center w-28">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal">
-              {Array.isArray(lotes) && lotes.length > 0 ? (
+              {isLoading && !hasLoadedOnce ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <RefreshCw className="w-5 h-5 animate-spin text-emerald-800" />
+                      <span className="font-semibold text-slate-700">Cargando lotes...</span>
+                      <span className="text-[11px] text-slate-400">Consultando registros oficiales en Google Sheets</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : backendMessage && lotes.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-xs text-red-600">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <AlertCircle className="w-6 h-6 text-red-500" />
+                      <span className="font-semibold text-slate-800">No se pudo cargar la información.</span>
+                      <button
+                        onClick={() => loadData(page, debouncedSearch, true)}
+                        className="mt-1 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 rounded font-medium transition cursor-pointer"
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : Array.isArray(lotes) && lotes.length > 0 ? (
                 lotes.map((lote) => {
                   const isBlocked = lote.estado === 'Bloqueado';
+                  const haTotales = lote.hectareas || 0;
+                  const haEnGarantia = lote.hectareasEnGarantia !== undefined ? lote.hectareasEnGarantia : (lote.enGarantia ? haTotales : 0);
+                  const haDisponibles = lote.hectareasDisponibles !== undefined ? lote.hectareasDisponibles : Math.max(0, haTotales - haEnGarantia);
+
                   return (
                     <tr
                       key={lote.idLote}
@@ -406,27 +504,34 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
                           <span className="text-slate-300 italic">—</span>
                         )}
                       </td>
-                      <td className="py-1.5 px-3 font-mono text-right font-medium text-slate-800 border-r border-slate-100">
-                        {formatHectareas(lote.hectareas)}
-                      </td>
                       <td className="py-1.5 px-3 text-slate-600 border-r border-slate-100 truncate max-w-[140px]">
                         {lote.ubicacion || '—'}
                       </td>
+                      <td className="py-1.5 px-3 font-mono text-right font-medium text-slate-800 border-r border-slate-100">
+                        {formatHectareas(haTotales)}
+                      </td>
 
-                      {/* DISPONIBILIDAD / EN GARANTÍA (CALCULADO) */}
-                      <td className="py-1.5 px-3 text-center border-r border-slate-100">
-                        {lote.enGarantia ? (
-                          <span
-                            title={`Afectado a la garantía ${lote.solicitudGarantiaActiva || ''}`}
-                            className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 uppercase tracking-tight"
-                          >
-                            EN GARANTÍA
-                          </span>
+                      {/* EN GARANTÍA */}
+                      <td className="py-1.5 px-3 text-right border-r border-slate-100 font-mono">
+                        {haEnGarantia > 0 ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="font-semibold text-purple-950">
+                              {formatHectareas(haEnGarantia)}
+                            </span>
+                            <span className="inline-block px-1 py-0.2 rounded text-[9px] font-bold bg-purple-100 text-purple-900 border border-purple-300 uppercase tracking-tight">
+                              EN GARANTÍA
+                            </span>
+                          </div>
                         ) : (
-                          <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            Libre
-                          </span>
+                          <span className="text-slate-400">0,00 ha</span>
                         )}
+                      </td>
+
+                      {/* DISPONIBLE */}
+                      <td className="py-1.5 px-3 text-right border-r border-slate-100 font-mono">
+                        <span className={`font-semibold ${haDisponibles > 0 ? 'text-emerald-800' : 'text-slate-400'}`}>
+                          {formatHectareas(haDisponibles)}
+                        </span>
                       </td>
 
                       {/* ESTADO ADMINISTRATIVO */}
@@ -491,18 +596,18 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="p-0">
-                    <EmptyState
-                      type={search ? 'no-results' : 'backend-required'}
-                      title={search ? 'Sin coincidencias en lotes' : 'No hay registros de parcelas'}
-                      description={
-                        search
+                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-1.5 max-w-sm mx-auto">
+                      <MapPin className="w-8 h-8 text-slate-300 stroke-[1.5]" />
+                      <span className="font-semibold text-slate-700">
+                        {search ? 'Sin coincidencias en lotes' : 'No hay registros para mostrar.'}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {search
                           ? `No se encontró ningún lote con "${search}".`
-                          : 'No se pudo cargar la información o no hay lotes registrados.'
-                      }
-                      onAction={loadData}
-                      actionLabel="Reintentar Consulta"
-                    />
+                          : 'No se encontraron lotes registrados en Google Sheets.'}
+                      </span>
+                    </div>
                   </td>
                 </tr>
               )}
@@ -515,12 +620,17 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
           <div>
             Página <strong className="text-slate-900">{page}</strong> de{' '}
             <strong className="text-slate-900">{totalPages}</strong>
+            {total > 0 && (
+              <span className="ml-2 text-slate-500 hidden sm:inline">
+                ({fromRecord}–{toRecord} de {total})
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1 || isLoading}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <ChevronLeft className="w-3 h-3" />
               <span>Anterior</span>
@@ -528,7 +638,7 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages || isLoading}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <span>Siguiente</span>
               <ChevronRight className="w-3 h-3" />

@@ -113,7 +113,16 @@ export const Reportes: React.FC = () => {
     try {
       const data = await getReporte(selectedReportId);
       if (data && Array.isArray(data.columnas) && Array.isArray(data.filas)) {
-        setReportData(data);
+        setReportData({
+          titulo: selectedReportInfo?.titulo || 'Reporte de Garantías',
+          columnas: data.columnas,
+          filas: data.filas,
+          resumen: {
+            'Total Registros': data.registros?.length || data.totalGarantias || 0,
+            ...(data.hectareasEnGarantia > 0 ? { 'Hectáreas Comprometidas': `${data.hectareasEnGarantia} ha` } : {}),
+            'Fecha Generación': new Date(data.generado).toLocaleDateString(),
+          },
+        });
       } else {
         setErrorMessage('No se pudo cargar la información para este reporte.');
         setReportData(null);

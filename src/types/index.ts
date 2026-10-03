@@ -36,6 +36,8 @@ export interface Lote {
   // Calculado dinámicamente según garantías activas:
   enGarantia?: boolean;
   solicitudGarantiaActiva?: string;
+  hectareasEnGarantia?: number;
+  hectareasDisponibles?: number;
 }
 
 export type TipoBien = 'Vehículo' | 'Maquinaria' | 'Implemento' | 'Otro bien';
@@ -60,6 +62,7 @@ export interface Bien {
   // Calculado dinámicamente según garantías activas:
   enGarantia?: boolean;
   solicitudGarantiaActiva?: string;
+  valorGarantiaUSD?: number;
 }
 
 export type TipoGarantiaCon = 'Farmer Rechnung' | 'Campo Grande' | 'Cliente';
@@ -69,10 +72,15 @@ export interface GarantiaLoteRelacion {
   idLote: string;
   numeroLote: string;
   hectareas: number;
+  hectareasTotales?: number;
+  hectareasDisponibles?: number;
   propietario?: string;
   cuentaPropietario?: string | number;
   ubicacion?: string;
   encargado?: string;
+  garantiaConTipo?: TipoGarantiaCon | string;
+  garantiaConCuenta?: string | number;
+  garantiaConNombre?: string;
 }
 
 export interface GarantiaBienRelacion {
@@ -87,6 +95,10 @@ export interface GarantiaBienRelacion {
   propietario?: string;
   cuentaPropietario?: string | number;
   ubicacion?: string;
+  valorGarantiaUSD?: number;
+  garantiaConTipo?: TipoGarantiaCon | string;
+  garantiaConCuenta?: string | number;
+  garantiaConNombre?: string;
 }
 
 export interface Garantia {
@@ -101,10 +113,19 @@ export interface Garantia {
   garantiaConCuenta?: string | number;
   garantiaConNombre: string;
   tipoGarantia: string; // 'Terreno' | 'Bien' | 'Terrenos y Bienes'
+  modalidad?: 'Simple' | 'Múltiple';
   observacion?: string;
   // Relaciones cargadas desde garantia_lotes y garantia_bienes
   lotes: GarantiaLoteRelacion[];
   bienes: GarantiaBienRelacion[];
+  // Campos resumen entregados por listarGarantias:
+  lotesResumen?: string;
+  polizasResumen?: string;
+  ubicacionesResumen?: string;
+  cantidadLotes?: number;
+  cantidadBienes?: number;
+  totalHectareas?: number;
+  totalValorBienesUSD?: number;
 }
 
 export interface ConfiguracionSistema {
@@ -116,6 +137,7 @@ export interface DashboardStats {
   hectareasEnGarantia: number | null;
   hectareasDisponibles: number | null;
   bienesEnGarantia: number | null;
+  valorBienesEnGarantiaUSD: number | null;
   garantiasExternas: number | null;
   lotesBloqueados: number | null;
   bienesBloqueados: number | null;
@@ -136,6 +158,8 @@ export interface PaginatedResponse<T> {
   page: number;
   pageSize: number;
   totalPages: number;
+  from?: number;
+  to?: number;
 }
 
 export interface ReporteItem {

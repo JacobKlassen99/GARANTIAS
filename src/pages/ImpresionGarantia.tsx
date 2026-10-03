@@ -18,6 +18,19 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
     window.print();
   };
 
+  const hasLotes = Array.isArray(garantia.lotes) && garantia.lotes.length > 0;
+  const hasBienes = Array.isArray(garantia.bienes) && garantia.bienes.length > 0;
+
+  const totalHectareas = hasLotes
+    ? garantia.lotes.reduce((acc, l) => acc + (Number(l.hectareas) || 0), 0)
+    : 0;
+
+  const totalValorUSD = hasBienes
+    ? garantia.bienes.reduce((acc, b) => acc + (Number(b.valorGarantiaUSD) || 0), 0)
+    : 0;
+
+  const documentTitle = hasLotes && !hasBienes ? 'GARANTÍA DE PARCELAS' : 'GARANTÍA DE BIENES';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto">
       {/* Contenedor Modal */}
@@ -34,7 +47,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded transition shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded transition shadow-2xs cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>Imprimir</span>
@@ -43,7 +56,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
             <button
               onClick={handlePrint}
               title="Utilice la opción Guardar como PDF en el diálogo de impresión"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded transition border border-slate-700"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded transition border border-slate-700 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Guardar PDF</span>
@@ -51,7 +64,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
 
             <button
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition"
+              className="p-1.5 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition cursor-pointer"
               title="Cerrar vista de impresión"
             >
               <X className="w-4 h-4" />
@@ -64,7 +77,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
           <div className="flex items-center gap-2 text-amber-900 font-medium">
             <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
             <span>
-              <strong>Campo Temporal:</strong> Ingrese el N.º de Identificación / CI para completar el documento impreso.
+              <strong>Campo Temporal:</strong> Ingrese el N.º de Identificación / CI para completar el documento impreso (no se guarda en base de datos).
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -89,8 +102,8 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
             <p className="text-[10pt] font-semibold tracking-widest uppercase text-slate-700 mt-0.5">
               DEPARTAMENTO DE ADMINISTRACIÓN Y REGISTRO DE PARCELAS
             </p>
-            <div className="mt-3 inline-block border border-slate-900 px-4 py-1 font-bold text-sm uppercase tracking-wider bg-slate-50">
-              GARANTÍA DE PARCELAS / BIENES
+            <div className="mt-3 inline-block border-2 border-slate-900 px-5 py-1 font-black text-sm uppercase tracking-wider bg-slate-50">
+              {documentTitle}
             </div>
             <div className="mt-2 text-right text-xs font-mono">
               <strong>N.º Solicitud:</strong> {garantia.numeroSolicitud} &nbsp;|&nbsp;{' '}
@@ -124,37 +137,44 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
             </div>
 
             {/* SECCIÓN 2: BIENES Y LOTES AFECTADOS */}
-            <div className="border border-slate-400 rounded p-3">
-              <div className="font-bold uppercase text-[11px] tracking-wider text-slate-800 border-b border-slate-300 pb-1 mb-2">
+            <div className="border border-slate-400 rounded p-3 space-y-3">
+              <div className="font-bold uppercase text-[11px] tracking-wider text-slate-800 border-b border-slate-300 pb-1">
                 2. Detalle de Bienes y/o Parcelas en Garantía
               </div>
 
               {/* Lotes */}
-              {garantia.lotes && garantia.lotes.length > 0 && (
-                <div className="mb-3">
-                  <div className="text-[11px] font-bold text-emerald-950 mb-1">
-                    Parcelas / Terrenos Comprometidos:
+              {hasLotes && (
+                <div>
+                  <div className="text-[11px] font-bold text-emerald-950 mb-1 flex items-center justify-between">
+                    <span>TERRENOS / PARCELAS COMPROMETIDAS:</span>
+                    <span className="font-mono text-xs">
+                      Subtotal: <strong>{formatHectareas(totalHectareas)}</strong>
+                    </span>
                   </div>
                   <table className="w-full text-left text-xs border border-slate-300">
                     <thead className="bg-slate-100 font-bold border-b border-slate-300">
                       <tr>
                         <th className="p-1.5 border-r border-slate-300">N.º Parcela</th>
-                        <th className="p-1.5 border-r border-slate-300">Superficie</th>
+                        <th className="p-1.5 border-r border-slate-300 text-right">Superficie</th>
                         <th className="p-1.5 border-r border-slate-300">Ubicación</th>
-                        <th className="p-1.5">Encargado (si corresponde)</th>
+                        <th className="p-1.5 border-r border-slate-300">Encargado</th>
+                        <th className="p-1.5">Garantía con</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200">
+                    <tbody className="divide-y divide-slate-200 font-normal">
                       {garantia.lotes.map((lote, i) => (
                         <tr key={i}>
                           <td className="p-1.5 font-bold font-mono border-r border-slate-200">
                             {lote.numeroLote}
                           </td>
-                          <td className="p-1.5 font-mono border-r border-slate-200">
+                          <td className="p-1.5 font-mono text-right border-r border-slate-200 font-semibold">
                             {formatHectareas(lote.hectareas)}
                           </td>
                           <td className="p-1.5 border-r border-slate-200">{lote.ubicacion || '—'}</td>
-                          <td className="p-1.5">{lote.encargado || '—'}</td>
+                          <td className="p-1.5 border-r border-slate-200">{lote.encargado || '—'}</td>
+                          <td className="p-1.5 font-semibold text-slate-800">
+                            {lote.garantiaConNombre || garantia.garantiaConNombre}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -163,41 +183,72 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
               )}
 
               {/* Bienes */}
-              {garantia.bienes && garantia.bienes.length > 0 && (
+              {hasBienes && (
                 <div>
-                  <div className="text-[11px] font-bold text-blue-950 mb-1">
-                    Vehículos, Maquinarias e Implementos:
+                  <div className="text-[11px] font-bold text-blue-950 mb-1 flex items-center justify-between">
+                    <span>VEHÍCULOS, MAQUINARIAS E IMPLEMENTOS:</span>
+                    <span className="font-mono text-xs text-emerald-950">
+                      Subtotal: <strong>$us. {totalValorUSD.toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                    </span>
                   </div>
                   <table className="w-full text-left text-xs border border-slate-300">
                     <thead className="bg-slate-100 font-bold border-b border-slate-300">
                       <tr>
+                        <th className="p-1.5 border-r border-slate-300">Maquinaria / Bien</th>
                         <th className="p-1.5 border-r border-slate-300">N.º Póliza</th>
-                        <th className="p-1.5 border-r border-slate-300">Tipo / Descripción</th>
-                        <th className="p-1.5 border-r border-slate-300">Marca / Modelo</th>
-                        <th className="p-1.5">Placa / Ubicación</th>
+                        <th className="p-1.5 border-r border-slate-300 text-right">Valor en Garantía ($us.)</th>
+                        <th className="p-1.5 border-r border-slate-300">Garantía con</th>
+                        <th className="p-1.5">Ubicación / Placa</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {garantia.bienes.map((bien, i) => (
-                        <tr key={i}>
-                          <td className="p-1.5 font-bold font-mono border-r border-slate-200">
-                            {bien.numeroPoliza}
-                          </td>
-                          <td className="p-1.5 border-r border-slate-200">
-                            {bien.tipoBien} {bien.descripcion ? `- ${bien.descripcion}` : ''}
-                          </td>
-                          <td className="p-1.5 border-r border-slate-200">
-                            {bien.marca} {bien.modelo}
-                          </td>
-                          <td className="p-1.5 font-mono">
-                            {bien.placa ? `Placa: ${bien.placa}` : bien.ubicacion || '—'}
-                          </td>
-                        </tr>
-                      ))}
+                    <tbody className="divide-y divide-slate-200 font-normal">
+                      {garantia.bienes.map((bien, i) => {
+                        const valUSD = Number(bien.valorGarantiaUSD) || 0;
+                        return (
+                          <tr key={i}>
+                            <td className="p-1.5 border-r border-slate-200 font-medium">
+                              {bien.tipoBien} {bien.descripcion ? `- ${bien.descripcion}` : ''}{' '}
+                              {bien.marca ? `(${bien.marca})` : ''}
+                            </td>
+                            <td className="p-1.5 font-bold font-mono border-r border-slate-200">
+                              {bien.numeroPoliza}
+                            </td>
+                            <td className="p-1.5 font-mono text-right font-bold text-emerald-950 border-r border-slate-200">
+                              {valUSD > 0
+                                ? `$us. ${valUSD.toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : '—'}
+                            </td>
+                            <td className="p-1.5 border-r border-slate-200 font-semibold text-slate-800">
+                              {bien.garantiaConNombre || garantia.garantiaConNombre}
+                            </td>
+                            <td className="p-1.5 font-mono text-slate-600">
+                              {bien.placa ? `Placa: ${bien.placa}` : bien.ubicacion || '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
+
+              {/* RESUMEN CONSOLIDADO DE TOTALES SEPARADOS */}
+              <div className="bg-slate-100 p-2.5 rounded border border-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                {hasLotes && (
+                  <div>
+                    <span className="text-slate-600 uppercase font-semibold text-[10px]">Superficie Total en Garantía: </span>
+                    <strong className="font-mono text-sm text-emerald-900 ml-1">{formatHectareas(totalHectareas)}</strong>
+                  </div>
+                )}
+                {hasBienes && (
+                  <div>
+                    <span className="text-slate-600 uppercase font-semibold text-[10px]">Valor Total de Bienes en Garantía: </span>
+                    <strong className="font-mono text-sm text-emerald-900 ml-1">
+                      $us. {totalValorUSD.toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </strong>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* SECCIÓN 3: PRESTATARIO Y GARANTÍA CON */}

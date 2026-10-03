@@ -10,6 +10,7 @@ import {
   Layers,
   ExternalLink,
   RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { DashboardStats } from '../types';
 import { getDashboardStats } from '../services/backend';
@@ -34,14 +35,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
     hectareasEnGarantia: null,
     hectareasDisponibles: null,
     bienesEnGarantia: null,
+    valorBienesEnGarantiaUSD: null,
     garantiasExternas: null,
     lotesBloqueados: null,
     bienesBloqueados: null,
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
 
   const loadStats = async () => {
     setIsLoading(true);
+    setHasError(false);
     try {
       const data = await getDashboardStats();
       if (data && typeof data === 'object') {
@@ -50,6 +54,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
           hectareasEnGarantia: typeof data.hectareasEnGarantia === 'number' ? data.hectareasEnGarantia : null,
           hectareasDisponibles: typeof data.hectareasDisponibles === 'number' ? data.hectareasDisponibles : null,
           bienesEnGarantia: typeof data.bienesEnGarantia === 'number' ? data.bienesEnGarantia : null,
+          valorBienesEnGarantiaUSD:
+            typeof data.valorBienesEnGarantiaUSD === 'number' ? data.valorBienesEnGarantiaUSD : null,
           garantiasExternas: typeof data.garantiasExternas === 'number' ? data.garantiasExternas : null,
           lotesBloqueados: typeof data.lotesBloqueados === 'number' ? data.lotesBloqueados : null,
           bienesBloqueados: typeof data.bienesBloqueados === 'number' ? data.bienesBloqueados : null,
@@ -60,17 +66,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
           hectareasEnGarantia: null,
           hectareasDisponibles: null,
           bienesEnGarantia: null,
+          valorBienesEnGarantiaUSD: null,
           garantiasExternas: null,
           lotesBloqueados: null,
           bienesBloqueados: null,
         });
       }
     } catch {
+      setHasError(true);
       setStats({
         garantiasActivas: null,
         hectareasEnGarantia: null,
         hectareasDisponibles: null,
         bienesEnGarantia: null,
+        valorBienesEnGarantiaUSD: null,
         garantiasExternas: null,
         lotesBloqueados: null,
         bienesBloqueados: null,
@@ -84,15 +93,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
     loadStats();
   }, []);
 
-  const renderValue = (val: number | null | undefined, isHectareas = false) => {
+  const renderValue = (val: number | null | undefined, mode: 'count' | 'ha' | 'usd' = 'count') => {
     if (isLoading) {
       return <span className="inline-block w-8 h-4 bg-slate-200 animate-pulse rounded" />;
     }
     if (val === null || val === undefined) {
       return <span className="text-slate-400 font-mono">—</span>;
     }
-    if (isHectareas) {
+    if (mode === 'ha') {
       return <span className="font-mono">{formatHectareas(val)}</span>;
+    }
+    if (mode === 'usd') {
+      return (
+        <span className="font-mono text-emerald-950 font-bold">
+          $us. {val.toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+      );
     }
     return <span className="font-mono">{val.toLocaleString('es-BO')}</span>;
   };
@@ -107,14 +123,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
     },
     {
       title: 'Hectáreas en Garantía',
-      value: renderValue(stats.hectareasEnGarantia, true),
+      value: renderValue(stats.hectareasEnGarantia, 'ha'),
       desc: 'Superficie total comprometida',
       icon: <Layers className="w-5 h-5 text-emerald-700" />,
       action: () => onNavigate('lotes'),
     },
     {
       title: 'Hectáreas Disponibles',
-      value: renderValue(stats.hectareasDisponibles, true),
+      value: renderValue(stats.hectareasDisponibles, 'ha'),
       desc: 'Superficie libre para respaldos',
       icon: <Landmark className="w-5 h-5 text-blue-700" />,
       action: () => onNavigate('lotes'),
@@ -124,6 +140,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       value: renderValue(stats.bienesEnGarantia),
       desc: 'Vehículos, maquinarias e implementos activos',
       icon: <PlusCircle className="w-5 h-5 text-emerald-700" />,
+      action: () => onNavigate('bienes'),
+    },
+    {
+      title: 'Valor de Bienes en Garantía',
+      value: renderValue(stats.valorBienesEnGarantiaUSD, 'usd'),
+      desc: 'Monto total respaldado en dólares',
+      icon: <Landmark className="w-5 h-5 text-emerald-800" />,
       action: () => onNavigate('bienes'),
     },
     {
@@ -165,13 +188,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <button
             onClick={loadStats}
             disabled={isLoading}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-700' : ''}`} />
             <span>Actualizar Datos</span>
           </button>
         </div>
       </div>
+
+      {hasError && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded flex items-center justify-between text-xs text-red-800">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>No se pudo cargar la información.</span>
+          </div>
+          <button
+            onClick={loadStats}
+            className="px-2.5 py-1 text-xs font-semibold text-red-800 hover:text-red-900 bg-red-100 rounded hover:bg-red-200 transition cursor-pointer"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
 
       {/* ACCESOS RÁPIDOS */}
       <div className="bg-white p-3 rounded border border-slate-200 shadow-2xs">

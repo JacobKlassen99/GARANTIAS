@@ -48,24 +48,25 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans antialiased text-slate-800">
-      {/* Encabezado Superior */}
+    <div className="h-screen flex flex-col bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden">
+      {/* Encabezado Superior (fijo en la parte superior) */}
       <Header
         onLogout={handleLogout}
         institucionName='ASOC. CIVIL "COLONIA CHIHUAHUA"'
       />
 
       {/* Contenedor Principal: Sidebar + Contenido */}
-      <div className="flex flex-1 min-h-[calc(100vh-53px)] pb-16 md:pb-0">
+      <div className="flex flex-1 overflow-hidden relative">
         {/* Barra Lateral Izquierda (Escritorio) */}
         <Sidebar
           currentSection={currentSection}
           onSelectSection={(sec) => setCurrentSection(sec)}
         />
 
-        {/* Área de Trabajo Principal */}
-        <main className="flex-1 p-3 sm:p-5 md:p-6 overflow-y-auto max-w-7xl">
-          <ErrorBoundary>
+        {/* Área de Trabajo Principal con desplazamiento independiente */}
+        <main className="flex-1 p-3 sm:p-5 md:p-6 overflow-y-auto pb-20 md:pb-6">
+          <div className="max-w-7xl mx-auto w-full">
+            <ErrorBoundary>
             {currentSection === 'dashboard' && (
               <Dashboard
                 onNavigate={(sec) => setCurrentSection(sec)}
@@ -120,8 +121,9 @@ export default function App() {
 
             {currentSection === 'configuracion' && <Configuracion />}
           </ErrorBoundary>
-        </main>
-      </div>
+        </div>
+      </main>
+    </div>
 
       {/* Barra de Navegación Inferior (Teléfono) */}
       <BottomNav
