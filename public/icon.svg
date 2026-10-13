@@ -1,54 +1,57 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <!-- Rounded App Icon Background -->
-  <rect width="512" height="512" rx="112" fill="#1b4332"/>
-  <rect x="24" y="24" width="464" height="464" rx="88" fill="none" stroke="#2d6a4f" stroke-width="8" opacity="0.6"/>
+  <rect width="512" height="512" rx="96" fill="#1b4332"/>
+  <rect x="16" y="16" width="480" height="480" rx="80" fill="none" stroke="#2d6a4f" stroke-width="6" opacity="0.5"/>
 
-  <!-- Document / Certificate Base -->
-  <g transform="translate(80, 70)">
-    <!-- White Document Card -->
-    <rect x="20" y="20" width="240" height="300" rx="16" fill="#ffffff" filter="drop-shadow(0px 10px 15px rgba(0,0,0,0.25))"/>
-    <!-- Document Header Stripe -->
-    <rect x="20" y="20" width="240" height="64" rx="16" fill="#2d6a4f"/>
-    <rect x="20" y="68" width="240" height="16" fill="#2d6a4f"/>
-    <!-- Stamp Icon inside header -->
-    <circle cx="56" cy="52" r="16" fill="#d8f3dc"/>
-    <path d="M49 52l5 5 10-10" stroke="#1b4332" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    <line x1="88" y1="52" x2="220" y2="52" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
+  <!-- Scaled & Centered Group (+22% size for maximum visibility) -->
+  <g transform="translate(256, 256) scale(1.22) translate(-256, -256)">
+    <!-- Document / Certificate Base -->
+    <g transform="translate(72, 52)">
+      <!-- White Document Card -->
+      <rect x="20" y="20" width="256" height="316" rx="16" fill="#ffffff" filter="drop-shadow(0px 10px 15px rgba(0,0,0,0.3))"/>
+      <!-- Document Header Stripe -->
+      <rect x="20" y="20" width="256" height="68" rx="16" fill="#2d6a4f"/>
+      <rect x="20" y="72" width="256" height="16" fill="#2d6a4f"/>
+      <!-- Stamp Icon inside header -->
+      <circle cx="56" cy="54" r="16" fill="#d8f3dc"/>
+      <path d="M49 54l5 5 10-10" stroke="#1b4332" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <line x1="88" y1="54" x2="236" y2="54" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
 
-    <!-- Document Lines -->
-    <line x1="52" y1="120" x2="228" y2="120" stroke="#cbd5e1" stroke-width="10" stroke-linecap="round"/>
-    <line x1="52" y1="150" x2="190" y2="150" stroke="#e2e8f0" stroke-width="8" stroke-linecap="round"/>
-    <line x1="52" y1="180" x2="210" y2="180" stroke="#e2e8f0" stroke-width="8" stroke-linecap="round"/>
-  </g>
+      <!-- Document Lines -->
+      <line x1="52" y1="126" x2="244" y2="126" stroke="#cbd5e1" stroke-width="10" stroke-linecap="round"/>
+      <line x1="52" y1="158" x2="200" y2="158" stroke="#e2e8f0" stroke-width="8" stroke-linecap="round"/>
+      <line x1="52" y1="190" x2="224" y2="190" stroke="#e2e8f0" stroke-width="8" stroke-linecap="round"/>
+    </g>
 
-  <!-- Isometric Land Terrain Grid (Bottom-Left) -->
-  <g transform="translate(60, 260)">
-    <!-- Terrain Base -->
-    <path d="M20 100 L180 30 L320 90 L160 160 Z" fill="#2d6a4f" stroke="#52b788" stroke-width="3" stroke-linejoin="round"/>
-    <path d="M20 100 L160 160 V200 L20 140 Z" fill="#1b4332"/>
-    <path d="M160 160 L320 90 V130 L160 200 Z" fill="#143628"/>
+    <!-- Isometric Land Terrain Grid (Bottom-Left) -->
+    <g transform="translate(50, 240)">
+      <!-- Terrain Base -->
+      <path d="M20 100 L180 30 L320 90 L160 160 Z" fill="#2d6a4f" stroke="#52b788" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M20 100 L160 160 V200 L20 140 Z" fill="#1b4332"/>
+      <path d="M160 160 L320 90 V130 L160 200 Z" fill="#143628"/>
 
-    <!-- Grid lines on terrain -->
-    <path d="M90 65 L245 60 M170 45 L90 125 M245 60 L160 160" stroke="#74c69d" stroke-width="2.5" opacity="0.8"/>
-  </g>
+      <!-- Grid lines on terrain -->
+      <path d="M90 65 L245 60 M170 45 L90 125 M245 60 L160 160" stroke="#74c69d" stroke-width="2.5" opacity="0.8"/>
+    </g>
 
-  <!-- Security Shield with Checkmark (Right) -->
-  <g transform="translate(260, 140)">
-    <!-- Shield Shadow / Outline -->
-    <path d="M70 10 C110 15, 140 30, 150 70 C150 130, 110 180, 70 210 C30 180, -10 130, -10 70 C0 30, 30 15, 70 10 Z" fill="#ffffff" filter="drop-shadow(0px 8px 12px rgba(0,0,0,0.3))"/>
-    <!-- Shield Inner Fill -->
-    <path d="M70 20 C105 25, 131 38, 140 73 C140 123, 105 167, 70 195 C35 167, 0 123, 0 73 C9 38, 35 25, 70 20 Z" fill="#52b788"/>
-    <!-- Checkmark -->
-    <path d="M42 98 L62 118 L102 72" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  </g>
+    <!-- Security Shield with Checkmark (Right) -->
+    <g transform="translate(250, 120)">
+      <!-- Shield Shadow / Outline -->
+      <path d="M70 10 C110 15, 140 30, 150 70 C150 130, 110 180, 70 210 C30 180, -10 130, -10 70 C0 30, 30 15, 70 10 Z" fill="#ffffff" filter="drop-shadow(0px 8px 12px rgba(0,0,0,0.35))"/>
+      <!-- Shield Inner Fill -->
+      <path d="M70 20 C105 25, 131 38, 140 73 C140 123, 105 167, 70 195 C35 167, 0 123, 0 73 C9 38, 35 25, 70 20 Z" fill="#52b788"/>
+      <!-- Checkmark -->
+      <path d="M42 98 L62 118 L102 72" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
 
-  <!-- Red Map Location Pin (Foreground) -->
-  <g transform="translate(140, 180)">
-    <!-- Pin shadow -->
-    <ellipse cx="24" cy="92" rx="10" ry="4" fill="rgba(0,0,0,0.35)"/>
-    <!-- Pin Body -->
-    <path d="M24 0 C11 0 0 11 0 24 C0 42, 24 88, 24 88 C24 88, 48 42, 48 24 C48 11, 37 0, 24 0 Z" fill="#e63946" stroke="#ffffff" stroke-width="3"/>
-    <!-- Pin Inner Dot -->
-    <circle cx="24" cy="24" r="8" fill="#ffffff"/>
+    <!-- Red Map Location Pin (Foreground) -->
+    <g transform="translate(130, 160)">
+      <!-- Pin shadow -->
+      <ellipse cx="24" cy="92" rx="10" ry="4" fill="rgba(0,0,0,0.4)"/>
+      <!-- Pin Body -->
+      <path d="M24 0 C11 0 0 11 0 24 C0 42, 24 88, 24 88 C24 88, 48 42, 48 24 C48 11, 37 0, 24 0 Z" fill="#e63946" stroke="#ffffff" stroke-width="3.5"/>
+      <!-- Pin Inner Dot -->
+      <circle cx="24" cy="24" r="8" fill="#ffffff"/>
+    </g>
   </g>
 </svg>
