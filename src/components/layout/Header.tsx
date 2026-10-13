@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, LogOut, RefreshCw } from 'lucide-react';
+import { LogOut, RefreshCw } from 'lucide-react';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 
 interface HeaderProps {
@@ -32,8 +32,8 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2">
         {/* Brand & Institution Info */}
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="h-8 w-8 sm:h-9 sm:w-9 rounded bg-emerald-800 text-white flex items-center justify-center shrink-0 shadow-2xs">
-            <ShieldCheck className="w-5 h-5" />
+          <div className="h-8 w-8 sm:h-9 sm:w-9 rounded bg-emerald-800 p-0.5 flex items-center justify-center shrink-0 shadow-2xs border border-emerald-700">
+            <img src="/icon.svg" alt="Logo" className="w-full h-full object-contain rounded" />
           </div>
           <div className="min-w-0">
             <h1 className="text-xs sm:text-sm font-bold tracking-tight text-slate-900 truncate uppercase">

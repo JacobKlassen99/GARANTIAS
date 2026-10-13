@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Lock, ArrowRight, AlertCircle } from 'lucide-react';
+import { Lock, ArrowRight, AlertCircle } from 'lucide-react';
 import { login } from '../services/backend';
 
 interface LoginProps {
@@ -40,8 +40,8 @@ export const Login: React.FC<LoginProps> = ({ onSuccessLogin }) => {
       <div className="w-full max-w-md bg-white rounded-lg shadow-2xl border border-slate-200 overflow-hidden">
         {/* Header Institucional */}
         <div className="bg-emerald-900 text-white p-6 text-center border-b border-emerald-950">
-          <div className="mx-auto w-12 h-12 rounded bg-emerald-800 flex items-center justify-center mb-3 shadow-inner border border-emerald-700">
-            <ShieldCheck className="w-7 h-7 text-emerald-200" />
+          <div className="mx-auto w-14 h-14 rounded-lg bg-emerald-800 p-1 flex items-center justify-center mb-3 shadow-inner border border-emerald-700">
+            <img src="/icon.svg" alt="Logo" className="w-full h-full object-contain rounded" />
           </div>
           <h1 className="text-base sm:text-lg font-bold tracking-tight uppercase leading-snug">
             Registro de Garantía de Terrenos
