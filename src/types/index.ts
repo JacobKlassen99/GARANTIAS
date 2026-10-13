@@ -63,6 +63,7 @@ export interface Bien {
   enGarantia?: boolean;
   solicitudGarantiaActiva?: string;
   valorGarantiaUSD?: number;
+  valorBienUSD?: number;
 }
 
 export type TipoGarantiaCon = 'Farmer Rechnung' | 'Campo Grande' | 'Cliente';
@@ -96,6 +97,7 @@ export interface GarantiaBienRelacion {
   cuentaPropietario?: string | number;
   ubicacion?: string;
   valorGarantiaUSD?: number;
+  valorBienUSD?: number;
   garantiaConTipo?: TipoGarantiaCon | string;
   garantiaConCuenta?: string | number;
   garantiaConNombre?: string;
@@ -165,7 +167,19 @@ export interface DetalleClienteLote {
   hectareasEnGarantia: number;
   hectareasDisponibles: number;
   estado: EstadoRegistro;
+  enGarantia?: boolean;
+  propietario?: string;
+  cuentaPropietario?: string | number;
   relaciones?: RelacionLoteGarantia[];
+}
+
+export interface RelacionBienGarantia {
+  idGarantia?: string;
+  numeroSolicitud?: string;
+  garantiaConTipo?: string;
+  garantiaConCuenta?: string | number;
+  garantiaConNombre?: string;
+  valorGarantiaUSD?: number;
 }
 
 export interface DetalleClienteBien {
@@ -179,10 +193,14 @@ export interface DetalleClienteBien {
   ubicacion: string;
   estado: EstadoRegistro;
   enGarantia?: boolean;
+  propietario?: string;
+  cuentaPropietario?: string | number;
   garantiaConCuenta?: string | number;
   garantiaConNombre?: string;
   valorGarantiaUSD?: number;
+  valorBienUSD?: number;
   numeroSolicitud?: string;
+  relaciones?: RelacionBienGarantia[];
 }
 
 export interface DetalleCliente {

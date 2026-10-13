@@ -27,6 +27,8 @@ import {
   DetalleClienteLote,
   DetalleClienteBien,
   RelacionLoteGarantia,
+  RelacionBienGarantia,
+  EstadoRegistro,
 } from '../types';
 import { calcularEstadoVencimiento } from '../utils/textSearch';
 import {
@@ -374,12 +376,15 @@ export async function getDashboardStats(forceRefresh: boolean = false): Promise<
 
   const stats: DashboardStats = {
     garantiasActivas: garantias.length,
-    hectareasEnGarantia: lotes
-      .filter((l) => l.enGarantia)
-      .reduce((acc, l) => acc + (l.hectareasEnGarantia || l.hectareas || 0), 0),
-    hectareasDisponibles: lotes
-      .filter((l) => !l.enGarantia)
-      .reduce((acc, l) => acc + (l.hectareas || 0), 0),
+    hectareasEnGarantia: lotes.reduce((acc, l) => acc + (l.hectareasEnGarantia || 0), 0),
+    hectareasDisponibles: lotes.reduce(
+      (acc, l) =>
+        acc +
+        (l.hectareasDisponibles !== undefined
+          ? l.hectareasDisponibles
+          : Math.max(0, l.hectareas - (l.hectareasEnGarantia || 0))),
+      0
+    ),
     bienesEnGarantia: bienes.filter((b) => b.enGarantia).length,
     valorBienesEnGarantiaUSD: bienes
       .filter((b) => b.enGarantia)
@@ -407,6 +412,9 @@ export function normalizarCliente(item: any): Cliente {
 }
 
 export function normalizarLote(item: any): Lote {
+  const idLote = item?.['ID Lote'] || item?.idLote || '';
+  const numeroLote = item?.['N.º de Lote'] || item?.numeroLote || '';
+
   const enGarantiaCalculado =
     typeof item?.['En Garantía'] === 'boolean'
       ? item['En Garantía']
@@ -419,25 +427,56 @@ export function normalizarLote(item: any): Lote {
       ? item['Hectáreas Totales']
       : Number(item?.hectareas) || 0;
 
-  const hectareasEnGarantia =
+  const backendHaEnGarantia =
     typeof item?.['Hectáreas en Garantía'] === 'number'
       ? item['Hectáreas en Garantía']
       : typeof item?.hectareasEnGarantia === 'number'
       ? item.hectareasEnGarantia
-      : enGarantiaCalculado
-      ? hectareasTotales
-      : 0;
+      : undefined;
+
+  let hectareasEnGarantia = 0;
+  const garantiasCached = findAnyCachedData<Garantia>('garantias');
+  let foundInGuarantees = false;
+
+  if (garantiasCached && Array.isArray(garantiasCached) && garantiasCached.length > 0) {
+    for (const g of garantiasCached) {
+      if (Array.isArray(g.lotes)) {
+        for (const gl of g.lotes) {
+          const matchId = gl.idLote && idLote && String(gl.idLote).trim() === String(idLote).trim();
+          const matchNum = gl.numeroLote && numeroLote && String(gl.numeroLote).trim().toLowerCase() === String(numeroLote).trim().toLowerCase();
+          if (matchId || matchNum) {
+            foundInGuarantees = true;
+            hectareasEnGarantia += Number(gl.hectareas) || 0;
+          }
+        }
+      }
+    }
+  }
+
+  if (!foundInGuarantees) {
+    if (backendHaEnGarantia !== undefined && backendHaEnGarantia > 0 && backendHaEnGarantia < hectareasTotales) {
+      hectareasEnGarantia = backendHaEnGarantia;
+    } else if (enGarantiaCalculado) {
+      hectareasEnGarantia = backendHaEnGarantia !== undefined ? backendHaEnGarantia : hectareasTotales;
+    } else {
+      hectareasEnGarantia = 0;
+    }
+  }
+
+  hectareasEnGarantia = Math.min(hectareasTotales, Math.max(0, hectareasEnGarantia));
 
   const hectareasDisponibles =
-    typeof item?.['Hectáreas Disponibles'] === 'number'
+    typeof item?.['Hectáreas Disponibles'] === 'number' && !foundInGuarantees
       ? item['Hectáreas Disponibles']
-      : typeof item?.hectareasDisponibles === 'number'
+      : typeof item?.hectareasDisponibles === 'number' && !foundInGuarantees
       ? item.hectareasDisponibles
       : Math.max(0, hectareasTotales - hectareasEnGarantia);
 
+  const enGarantiaFinal = enGarantiaCalculado || hectareasEnGarantia > 0;
+
   return {
-    idLote: item?.['ID Lote'] || item?.idLote || '',
-    numeroLote: item?.['N.º de Lote'] || item?.numeroLote || '',
+    idLote,
+    numeroLote,
     cuentaPropietario: item?.['Cuenta Propietario'] ?? item?.cuentaPropietario ?? '',
     propietario: item?.['Propietario'] || item?.propietario || '',
     cuentaEncargado: item?.['Cuenta Encargado'] ?? item?.cuentaEncargado ?? '',
@@ -448,7 +487,7 @@ export function normalizarLote(item: any): Lote {
     motivoBloqueo: item?.['Motivo Bloqueo'] || item?.motivoBloqueo || '',
     fechaBloqueo: item?.['Fecha Bloqueo'] || item?.fechaBloqueo || '',
     observacion: item?.['Observación'] || item?.observacion || '',
-    enGarantia: enGarantiaCalculado || hectareasEnGarantia > 0,
+    enGarantia: enGarantiaFinal,
     solicitudGarantiaActiva: item?.['Disponibilidad'] || item?.solicitudGarantiaActiva || '',
     hectareasEnGarantia,
     hectareasDisponibles,
@@ -470,6 +509,15 @@ export function normalizarBien(item: any): Bien {
       ? item['Valor en Garantía']
       : 0;
 
+  const rawValorBien = item?.['Valor del Bien ($us.)'] ?? item?.valorBienUSD ?? item?.['Valor del Bien'];
+  let valorBienUSD: number | undefined = undefined;
+  if (rawValorBien !== undefined && rawValorBien !== null && String(rawValorBien).trim() !== '') {
+    const parsed = Number(rawValorBien);
+    if (!isNaN(parsed)) {
+      valorBienUSD = parsed;
+    }
+  }
+
   return {
     idBien: item?.['ID Bien'] || item?.idBien || '',
     numeroPoliza: item?.['N.º Póliza'] || item?.numeroPoliza || '',
@@ -490,6 +538,7 @@ export function normalizarBien(item: any): Bien {
     enGarantia: enGarantiaCalculado,
     solicitudGarantiaActiva: item?.['Disponibilidad'] || item?.solicitudGarantiaActiva || '',
     valorGarantiaUSD,
+    valorBienUSD,
   };
 }
 
@@ -656,102 +705,214 @@ export async function obtenerDetalleCliente(
 
   const clienteData = res.cliente || res;
   const rawGarantias = Array.isArray(res.garantias) ? res.garantias : [];
-  const rawLotes = Array.isArray(res.lotes) ? res.lotes : [];
-  const rawBienes = Array.isArray(res.bienes) ? res.bienes : [];
+
+  const garantiasNormalizadas: DetalleClienteGarantia[] = rawGarantias.map((g: any) => ({
+    idGarantia: g['ID Garantía'] || g.idGarantia || '',
+    numeroSolicitud:
+      g['N.º Solicitud'] !== undefined
+        ? String(g['N.º Solicitud'])
+        : g.numeroSolicitud
+        ? String(g.numeroSolicitud)
+        : '',
+    fecha: g['Fecha'] || g.fecha || '',
+    fechaVencimiento:
+      g['Fecha de Vencimiento'] || g.fechaVencimiento || g['Fecha Vencimiento'] || '',
+    estadoVencimiento: g['Estado Vencimiento'] || g.estadoVencimiento || '',
+    garantiaConTipo: g['Garantía con Tipo'] || g.garantiaConTipo || '',
+    garantiaConNombre: g['Garantía con Nombre'] || g.garantiaConNombre || '',
+    modalidad: g['Modalidad'] || g.modalidad || '',
+    tipoGarantia: g['Tipo de Garantía'] || g.tipoGarantia || '',
+    rol: g.rol || '',
+    prestatario: g['Prestatario'] || g.prestatario || '',
+    propietario: g['Propietario'] || g.propietario || '',
+    lotesResumen: g['Lotes'] || g.lotesResumen || '',
+    polizasResumen: g['Pólizas'] || g.polizasResumen || '',
+  }));
+
+  // Obtener todos los lotes y bienes globales de Google Sheets y garantías completas en paralelo
+  const [todosLosLotes, todosLosBienes, garantiasCompletas] = await Promise.all([
+    obtenerLotes(forceRefresh).catch(() => [] as Lote[]),
+    obtenerBienes(forceRefresh).catch(() => [] as Bien[]),
+    Promise.all(
+      garantiasNormalizadas.map(async (g) => {
+        if (!g.idGarantia) return null;
+        try {
+          return await obtenerGarantiaCompleta(g.idGarantia);
+        } catch {
+          return null;
+        }
+      })
+    ),
+  ]);
+
+  const lotesMap = new Map<string, DetalleClienteLote>();
+  const bienesMap = new Map<string, DetalleClienteBien>();
+
+  // A. Filtrar lotes donde el cliente figura como propietario (por número de cuenta o nombre)
+  for (const l of todosLosLotes) {
+    const lCuenta = String(l.cuentaPropietario || '').trim();
+    const lPropietario = String(l.propietario || '').toLowerCase().trim();
+    const cNombre = String(clienteData.nombre || '').toLowerCase().trim();
+
+    const matchesCuenta = lCuenta === clean;
+    const matchesNombre = cNombre && lPropietario && lPropietario.includes(cNombre);
+
+    if (matchesCuenta || matchesNombre) {
+      lotesMap.set(l.idLote, {
+        idLote: l.idLote,
+        numeroLote: l.numeroLote,
+        ubicacion: l.ubicacion,
+        propietario: l.propietario,
+        cuentaPropietario: l.cuentaPropietario,
+        hectareas: l.hectareas,
+        hectareasEnGarantia: l.hectareasEnGarantia || 0,
+        hectareasDisponibles: l.hectareasDisponibles ?? Math.max(0, l.hectareas - (l.hectareasEnGarantia || 0)),
+        estado: (l.estado || 'Disponible') as EstadoRegistro,
+        enGarantia: l.enGarantia || (l.hectareasEnGarantia || 0) > 0,
+        relaciones: [],
+      });
+    }
+  }
+
+  // B. Filtrar bienes donde el cliente figura como propietario (por número de cuenta o nombre)
+  for (const b of todosLosBienes) {
+    const bCuenta = String(b.cuentaPropietario || '').trim();
+    const bPropietario = String(b.propietario || '').toLowerCase().trim();
+    const cNombre = String(clienteData.nombre || '').toLowerCase().trim();
+
+    const matchesCuenta = bCuenta === clean;
+    const matchesNombre = cNombre && bPropietario && bPropietario.includes(cNombre);
+
+    if (matchesCuenta || matchesNombre) {
+      bienesMap.set(b.idBien, {
+        idBien: b.idBien,
+        numeroPoliza: b.numeroPoliza,
+        tipoBien: b.tipoBien,
+        descripcion: b.descripcion,
+        marca: b.marca,
+        modelo: b.modelo,
+        placa: b.placa,
+        ubicacion: b.ubicacion,
+        propietario: b.propietario,
+        cuentaPropietario: b.cuentaPropietario,
+        estado: (b.estado || 'Disponible') as EstadoRegistro,
+        enGarantia: b.enGarantia || false,
+        valorGarantiaUSD: 0,
+        valorBienUSD: b.valorBienUSD,
+        numeroSolicitud: b.solicitudGarantiaActiva || '',
+        garantiaConCuenta: b.cuentaPropietario,
+        garantiaConNombre: b.propietario,
+        relaciones: [],
+      });
+    }
+  }
+
+  for (const gc of garantiasCompletas) {
+    if (!gc) continue;
+    // Mapear lotes desde garantia_lotes
+    if (Array.isArray(gc.lotes)) {
+      for (const gl of gc.lotes) {
+        const idLote = gl.idLote || '';
+        if (!idLote) continue;
+
+        const rel: RelacionLoteGarantia = {
+          hectareas: gl.hectareas || 0,
+          garantiaConTipo: gl.garantiaConTipo || gc.garantiaConTipo,
+          garantiaConCuenta: gl.garantiaConCuenta || gc.garantiaConCuenta,
+          garantiaConNombre: gl.garantiaConNombre || gc.garantiaConNombre,
+          numeroSolicitud: gc.numeroSolicitud,
+          idGarantia: gc.idGarantia,
+        };
+
+        if (lotesMap.has(idLote)) {
+          const existing = lotesMap.get(idLote)!;
+          existing.relaciones = existing.relaciones || [];
+          existing.relaciones.push(rel);
+          existing.hectareasEnGarantia += gl.hectareas || 0;
+          existing.hectareasDisponibles = Math.max(0, existing.hectareas - existing.hectareasEnGarantia);
+          existing.enGarantia = true;
+        } else {
+          lotesMap.set(idLote, {
+            idLote,
+            numeroLote: gl.numeroLote || '',
+            ubicacion: gl.ubicacion || '',
+            propietario: gl.propietario || clienteData.nombre,
+            cuentaPropietario: gl.cuentaPropietario || clean,
+            hectareas: gl.hectareasTotales || gl.hectareas || 0,
+            hectareasEnGarantia: gl.hectareas || 0,
+            hectareasDisponibles: Math.max(0, (gl.hectareasTotales || gl.hectareas || 0) - (gl.hectareas || 0)),
+            estado: 'Disponible' as EstadoRegistro,
+            enGarantia: true,
+            relaciones: [rel],
+          });
+        }
+      }
+    }
+
+    // Mapear bienes desde garantia_bienes (conservando todas las relaciones sin duplicar registros principales)
+    if (Array.isArray(gc.bienes)) {
+      for (const gb of gc.bienes) {
+        const idBien = gb.idBien || '';
+        if (!idBien) continue;
+
+        const rel: RelacionBienGarantia = {
+          idGarantia: gc.idGarantia,
+          numeroSolicitud: gc.numeroSolicitud,
+          garantiaConTipo: gc.garantiaConTipo,
+          garantiaConCuenta: gc.garantiaConCuenta,
+          garantiaConNombre: gc.garantiaConNombre,
+          valorGarantiaUSD: Number(gb.valorGarantiaUSD) || 0,
+        };
+
+        if (bienesMap.has(idBien)) {
+          const existing = bienesMap.get(idBien)!;
+          existing.relaciones = existing.relaciones || [];
+          existing.relaciones.push(rel);
+          existing.enGarantia = true;
+          existing.valorGarantiaUSD = (existing.valorGarantiaUSD || 0) + (Number(gb.valorGarantiaUSD) || 0);
+          if (!existing.numeroSolicitud) {
+            existing.numeroSolicitud = gc.numeroSolicitud;
+          } else if (!existing.numeroSolicitud.includes(gc.numeroSolicitud)) {
+            existing.numeroSolicitud += `, ${gc.numeroSolicitud}`;
+          }
+          if (!existing.garantiaConNombre) {
+            existing.garantiaConNombre = gc.garantiaConNombre;
+          }
+        } else {
+          bienesMap.set(idBien, {
+            idBien,
+            numeroPoliza: gb.numeroPoliza || '',
+            tipoBien: gb.tipoBien || '',
+            descripcion: gb.descripcion || '',
+            marca: gb.marca || '',
+            modelo: gb.modelo || '',
+            placa: gb.placa || '',
+            ubicacion: gb.ubicacion || '',
+            propietario: gb.propietario || clienteData.nombre,
+            cuentaPropietario: gb.cuentaPropietario || clean,
+            estado: 'Disponible' as EstadoRegistro,
+            enGarantia: true,
+            garantiaConCuenta: gb.garantiaConCuenta || gc.garantiaConCuenta,
+            garantiaConNombre: gb.garantiaConNombre || gc.garantiaConNombre,
+            valorGarantiaUSD: Number(gb.valorGarantiaUSD) || 0,
+            valorBienUSD:
+              todosLosBienes.find((b) => b.idBien === gb.idBien)?.valorBienUSD ??
+              (gb.valorBienUSD !== undefined ? Number(gb.valorBienUSD) : undefined),
+            numeroSolicitud: gc.numeroSolicitud,
+            relaciones: [rel],
+          });
+        }
+      }
+    }
+  }
 
   const detalle: DetalleCliente = {
     cuenta: clienteData.cuenta ?? clean,
     nombre: clienteData.nombre || '',
     ci: clienteData.ci || '',
-    garantias: rawGarantias.map((g: any) => ({
-      idGarantia: g['ID Garantía'] || g.idGarantia || '',
-      numeroSolicitud:
-        g['N.º Solicitud'] !== undefined
-          ? String(g['N.º Solicitud'])
-          : g.numeroSolicitud
-          ? String(g.numeroSolicitud)
-          : '',
-      fecha: g['Fecha'] || g.fecha || '',
-      fechaVencimiento:
-        g['Fecha de Vencimiento'] || g.fechaVencimiento || g['Fecha Vencimiento'] || '',
-      estadoVencimiento: g['Estado Vencimiento'] || g.estadoVencimiento || '',
-      garantiaConTipo: g['Garantía con Tipo'] || g.garantiaConTipo || '',
-      garantiaConNombre: g['Garantía con Nombre'] || g.garantiaConNombre || '',
-      modalidad: g['Modalidad'] || g.modalidad || '',
-      tipoGarantia: g['Tipo de Garantía'] || g.tipoGarantia || '',
-      rol: g.rol || '',
-      prestatario: g['Prestatario'] || g.prestatario || '',
-      propietario: g['Propietario'] || g.propietario || '',
-      lotesResumen: g['Lotes'] || g.lotesResumen || '',
-      polizasResumen: g['Pólizas'] || g.polizasResumen || '',
-    })),
-    lotes: rawLotes.map((l: any) => {
-      const haTotales =
-        typeof l['Hectáreas'] === 'number' ? l['Hectáreas'] : Number(l.hectareas) || 0;
-      const haEnGarantia =
-        typeof l['Hectáreas en Garantía'] === 'number'
-          ? l['Hectáreas en Garantía']
-          : Number(l.hectareasEnGarantia) || 0;
-      const haDisponibles =
-        typeof l['Hectáreas Disponibles'] === 'number'
-          ? l['Hectáreas Disponibles']
-          : Number(l.hectareasDisponibles) || Math.max(0, haTotales - haEnGarantia);
-
-      return {
-        idLote: l['ID Lote'] || l.idLote || '',
-        numeroLote: l['N.º de Lote'] || l.numeroLote || '',
-        ubicacion: l['Ubicación'] || l.ubicacion || '',
-        hectareas: haTotales,
-        hectareasEnGarantia: haEnGarantia,
-        hectareasDisponibles: haDisponibles,
-        estado: l['Estado'] || l.estado || 'Disponible',
-        relaciones: Array.isArray(l.relaciones)
-          ? l.relaciones
-          : Array.isArray(l.garantias)
-          ? l.garantias.map((rg: any) => ({
-              hectareas:
-                typeof rg.hectareas === 'number'
-                  ? rg.hectareas
-                  : Number(rg['Hectáreas']) || 0,
-              garantiaConTipo: rg['Garantía con Tipo'] || rg.garantiaConTipo || '',
-              garantiaConCuenta: rg['Garantía con Cuenta'] ?? rg.garantiaConCuenta ?? '',
-              garantiaConNombre: rg['Garantía con Nombre'] || rg.garantiaConNombre || '',
-              numeroSolicitud: rg['N.º Solicitud'] || rg.numeroSolicitud || '',
-              idGarantia: rg['ID Garantía'] || rg.idGarantia || '',
-            }))
-          : l.garantiaConNombre || l['Garantía con Nombre']
-          ? [
-              {
-                hectareas: haEnGarantia,
-                garantiaConTipo: l['Garantía con Tipo'] || l.garantiaConTipo || '',
-                garantiaConCuenta: l['Garantía con Cuenta'] ?? l.garantiaConCuenta ?? '',
-                garantiaConNombre: l['Garantía con Nombre'] || l.garantiaConNombre || '',
-                numeroSolicitud: l['N.º Solicitud'] || l.numeroSolicitud || '',
-                idGarantia: l['ID Garantía'] || l.idGarantia || '',
-              },
-            ]
-          : [],
-      };
-    }),
-    bienes: rawBienes.map((b: any) => ({
-      idBien: b['ID Bien'] || b.idBien || '',
-      numeroPoliza: b['N.º Póliza'] || b.numeroPoliza || '',
-      tipoBien: b['Tipo de Bien'] || b.tipoBien || '',
-      descripcion: b['Descripción'] || b.descripcion || '',
-      marca: b['Marca'] || b.marca || '',
-      modelo: b['Modelo'] || b.modelo || '',
-      placa: b['Placa'] || b.placa || '',
-      ubicacion: b['Ubicación'] || b.ubicacion || '',
-      estado: b['Estado'] || b.estado || 'Disponible',
-      enGarantia: b['En Garantía'] ?? b.enGarantia ?? false,
-      garantiaConCuenta: b['Garantía con Cuenta'] ?? b.garantiaConCuenta ?? '',
-      garantiaConNombre: b['Garantía con Nombre'] || b.garantiaConNombre || '',
-      valorGarantiaUSD:
-        typeof b['Valor en Garantía ($us.)'] === 'number'
-          ? b['Valor en Garantía ($us.)']
-          : Number(b.valorGarantiaUSD) || 0,
-      numeroSolicitud: b['N.º Solicitud'] || b.numeroSolicitud || '',
-    })),
+    garantias: garantiasNormalizadas,
+    lotes: Array.from(lotesMap.values()),
+    bienes: Array.from(bienesMap.values()),
   };
 
   setToMemoryCache('client-detail', detalle, cacheKey);
@@ -993,6 +1154,7 @@ export async function crearBien(bien: Partial<Bien>): Promise<any> {
     motivoBloqueo: bien.motivoBloqueo ? bien.motivoBloqueo.trim() : '',
     fechaBloqueo: bien.fechaBloqueo || '',
     observacion: bien.observacion ? bien.observacion.trim() : '',
+    valorBienUSD: Number(bien.valorBienUSD) || 0,
   });
   invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
   return result;
@@ -1016,6 +1178,7 @@ export async function editarBien(bien: Partial<Bien>): Promise<any> {
     motivoBloqueo: bien.motivoBloqueo ? bien.motivoBloqueo.trim() : '',
     fechaBloqueo: bien.fechaBloqueo || '',
     observacion: bien.observacion ? bien.observacion.trim() : '',
+    valorBienUSD: Number(bien.valorBienUSD) || 0,
   });
   invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
   return result;

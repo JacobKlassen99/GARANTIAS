@@ -83,6 +83,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
   const [motivoBloqueo, setMotivoBloqueo] = useState('');
   const [fechaBloqueo, setFechaBloqueo] = useState('');
   const [observacion, setObservacion] = useState('');
+  const [valorBienUSD, setValorBienUSD] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -192,6 +193,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
     setMotivoBloqueo('');
     setFechaBloqueo('');
     setObservacion('');
+    setValorBienUSD('');
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -230,6 +232,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
     setMotivoBloqueo(bien.motivoBloqueo || '');
     setFechaBloqueo(bien.fechaBloqueo || '');
     setObservacion(bien.observacion || '');
+    setValorBienUSD(bien.valorBienUSD ? String(bien.valorBienUSD) : '');
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -277,6 +280,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
         motivoBloqueo: estado === 'Bloqueado' ? motivoBloqueo.trim() : '',
         fechaBloqueo: estado === 'Bloqueado' ? fechaBloqueo || getTodayIso() : '',
         observacion: observacion.trim(),
+        valorBienUSD: valorBienUSD.trim() !== '' ? Number(valorBienUSD) : 0,
       };
 
       await saveBien(payload, isEditing);
@@ -500,6 +504,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Propietario Actual</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Encargado</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Placa / Ubicación</th>
+                <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-right w-28">Valor ($us.)</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-center w-24">Garantía</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-center w-24">Estado</th>
                 <th className="py-1.5 px-3 font-bold text-center w-28">Acciones</th>
@@ -508,7 +513,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
             <tbody className="divide-y divide-slate-100 font-normal">
               {isLoading && !hasLoadedOnce ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                      <td colSpan={10} className="py-12 text-center text-xs text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <RefreshCw className="w-5 h-5 animate-spin text-emerald-800" />
                       <span className="font-semibold text-slate-700">Cargando bienes...</span>
@@ -518,7 +523,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                 </tr>
               ) : backendMessage && bienes.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-red-600">
+                  <td colSpan={10} className="py-12 text-center text-xs text-red-600">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="w-6 h-6 text-red-500" />
                       <span className="font-semibold text-slate-800">No se pudo cargar la información.</span>
@@ -587,6 +592,15 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                         <div className="text-[10px] text-slate-400 truncate max-w-[120px]">
                           {bien.ubicacion || '—'}
                         </div>
+                      </td>
+
+                      {/* VALOR DEL BIEN */}
+                      <td className="py-1.5 px-3 font-mono font-bold text-slate-800 text-right border-r border-slate-100">
+                        {bien.valorBienUSD && bien.valorBienUSD > 0 ? (
+                          `$us. ${bien.valorBienUSD.toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        ) : (
+                          <span className="text-slate-300 italic">—</span>
+                        )}
                       </td>
 
                       {/* EN GARANTÍA (CALCULADO) */}
@@ -667,7 +681,7 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                  <td colSpan={10} className="py-12 text-center text-xs text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-1.5 max-w-sm mx-auto">
                       <Tractor className="w-8 h-8 text-slate-300 stroke-[1.5]" />
                       <span className="font-semibold text-slate-700">
@@ -865,19 +879,35 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Estado Administrativo
+                    Valor del Bien ($us.)
                   </label>
-                  <select
-                    value={estado}
-                    onChange={(e) => setEstado(e.target.value as EstadoRegistro)}
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={valorBienUSD}
+                    onChange={(e) => setValorBienUSD(e.target.value)}
+                    placeholder="Ej: 25000"
                     disabled={isSaving}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700 font-medium"
-                  >
-                    <option value="Disponible">Disponible</option>
-                    <option value="Bloqueado">Bloqueado</option>
-                    <option value="Inactivo">Inactivo</option>
-                  </select>
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700 font-mono"
+                  />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Estado Administrativo
+                </label>
+                <select
+                  value={estado}
+                  onChange={(e) => setEstado(e.target.value as EstadoRegistro)}
+                  disabled={isSaving}
+                  className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700 font-medium"
+                >
+                  <option value="Disponible">Disponible</option>
+                  <option value="Bloqueado">Bloqueado</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
               </div>
 
               {/* Bloque de bloqueo condicional */}
