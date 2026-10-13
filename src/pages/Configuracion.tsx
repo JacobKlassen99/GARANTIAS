@@ -1,23 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Lock, Building, Save, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
-import { getConfiguracion, updateConfiguracion } from '../services/backend';
+import { getConfiguracion, updateConfiguracion, hasInMemoryCache } from '../services/backend';
 
 export const Configuracion: React.FC = () => {
   const [nombreInstitucion, setNombreInstitucion] = useState('ASOC. CIVIL "COLONIA CHIHUAHUA"');
   const [nuevaContrasena, setNuevaContrasena] = useState('');
   const [confirmarContrasena, setConfirmarContrasena] = useState('');
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(!hasInMemoryCache('configuracion'));
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const loadConfig = async () => {
-    setIsLoading(true);
+  const loadConfig = async (forceRefresh: boolean = false) => {
+    const isCached = !forceRefresh && hasInMemoryCache('configuracion');
+    if (!isCached) setIsLoading(true);
     setErrorMessage(null);
     try {
-      const cfg = await getConfiguracion();
-      if (cfg.nombreInstitucion) {
+      const cfg = await getConfiguracion(forceRefresh);
+      if (cfg && cfg.nombreInstitucion) {
         setNombreInstitucion(cfg.nombreInstitucion);
       }
     } catch {
@@ -28,7 +29,7 @@ export const Configuracion: React.FC = () => {
   };
 
   useEffect(() => {
-    loadConfig();
+    loadConfig(false);
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -78,7 +79,7 @@ export const Configuracion: React.FC = () => {
         </div>
 
         <button
-          onClick={loadConfig}
+          onClick={() => loadConfig(true)}
           disabled={isLoading}
           className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 transition"
         >

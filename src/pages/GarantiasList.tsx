@@ -108,6 +108,36 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
 
   const totalPages = Math.ceil(total / pageSize) || 1;
 
+  const renderVencimientoBadge = (estado?: string, fechaVenc?: string) => {
+    if (!fechaVenc && !estado) {
+      return (
+        <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
+          Sin vencimiento
+        </span>
+      );
+    }
+    const st = (estado || '').toLowerCase();
+    if (st.includes('vencid') && !st.includes('próxim')) {
+      return (
+        <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-red-50 text-red-700 border border-red-200">
+          Vencida
+        </span>
+      );
+    }
+    if (st.includes('próxim') || st.includes('proxim')) {
+      return (
+        <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+          Próxima a vencer
+        </span>
+      );
+    }
+    return (
+      <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+        Vigente
+      </span>
+    );
+  };
+
   return (
     <div className="space-y-3">
       {/* Encabezado */}
@@ -216,6 +246,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
               <tr>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 w-28">N.º Solicitud</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 w-24">Fecha</th>
+                <th className="py-1.5 px-3 font-bold border-r border-slate-200 w-28">Vencimiento</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Propietario del Bien</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Prestatario (Cuenta en G.)</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Garantía Con</th>
@@ -227,7 +258,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
             <tbody className="divide-y divide-slate-100 font-normal">
               {isLoading && !hasLoadedOnce ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-xs text-slate-500">
+                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <RefreshCw className="w-5 h-5 animate-spin text-emerald-800" />
                       <span className="font-semibold text-slate-700">Cargando garantías...</span>
@@ -237,7 +268,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 </tr>
               ) : backendMessage && garantias.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-xs text-red-600">
+                  <td colSpan={9} className="py-12 text-center text-xs text-red-600">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="w-6 h-6 text-red-500" />
                       <span className="font-semibold text-slate-800">No se pudo cargar la información.</span>
@@ -261,10 +292,26 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                       className="hover:bg-emerald-50/50 transition-colors group"
                     >
                       <td className="py-1.5 px-3 font-mono font-bold text-emerald-950 border-r border-slate-100 bg-slate-50/30">
-                        {garantia.numeroSolicitud}
+                        {garantia.numeroSolicitud || '—'}
                       </td>
                       <td className="py-1.5 px-3 font-mono text-slate-600 border-r border-slate-100">
                         {formatFecha(garantia.fecha)}
+                      </td>
+                      <td className="py-1.5 px-3 border-r border-slate-100 whitespace-nowrap">
+                        {garantia.fechaVencimiento ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-[11px] font-semibold text-slate-800">
+                              {formatFecha(garantia.fechaVencimiento)}
+                            </span>
+                            <div>
+                              {renderVencimientoBadge(garantia.estadoVencimiento, garantia.fechaVencimiento)}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="inline-block px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                            Sin vencimiento
+                          </span>
+                        )}
                       </td>
                       <td className="py-1.5 px-3 border-r border-slate-100">
                         <div className="font-semibold text-slate-800">{garantia.propietario}</div>
@@ -352,7 +399,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-xs text-slate-500">
+                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-1.5 max-w-sm mx-auto">
                       <FileCheck2 className="w-8 h-8 text-slate-300 stroke-[1.5]" />
                       <span className="font-semibold text-slate-700">
@@ -404,7 +451,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
           <div className="w-full max-w-lg bg-white rounded-lg shadow-xl border border-slate-300 overflow-hidden">
             <div className="bg-slate-800 text-white px-4 py-3 flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider">
-                Garantía N.º {garantiaParaVer.numeroSolicitud}
+                Garantía N.º {garantiaParaVer.numeroSolicitud || garantiaParaVer.idGarantia}
               </h3>
               <button
                 onClick={() => setGarantiaParaVer(null)}
@@ -417,12 +464,34 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
             <div className="p-4 text-xs space-y-3">
               <div className="grid grid-cols-2 gap-2 p-2.5 bg-slate-50 rounded border border-slate-200">
                 <div>
-                  <span className="text-slate-500">Fecha:</span>{' '}
+                  <span className="text-slate-500">Fecha de Emisión:</span>{' '}
                   <strong>{formatFecha(garantiaParaVer.fecha)}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500">Vencimiento:</span>{' '}
+                  <strong>
+                    {garantiaParaVer.fechaVencimiento
+                      ? formatFecha(garantiaParaVer.fechaVencimiento)
+                      : 'Sin vencimiento'}
+                  </strong>
+                  {garantiaParaVer.fechaVencimiento && (
+                    <span className="ml-1.5">
+                      {renderVencimientoBadge(
+                        garantiaParaVer.estadoVencimiento,
+                        garantiaParaVer.fechaVencimiento
+                      )}
+                    </span>
+                  )}
                 </div>
                 <div>
                   <span className="text-slate-500">Tipo:</span>{' '}
                   <strong>{garantiaParaVer.tipoGarantia}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500">Modalidad:</span>{' '}
+                  <span className="font-semibold text-emerald-900 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                    {garantiaParaVer.modalidad || 'Simple'}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-500">Propietario:</span>{' '}

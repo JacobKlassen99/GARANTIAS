@@ -26,7 +26,7 @@
   aside,
   nav,
   button,
-  .print\\:hidden {
+  .no-print {
     display: none !important;
   }
 }

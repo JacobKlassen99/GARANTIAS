@@ -33,6 +33,12 @@ import {
   getBienes,
   getNextSolicitudNumber,
   saveGarantia,
+  buscarLotes,
+  buscarBienes,
+  obtenerLotes,
+  obtenerBienes,
+  findAnyCachedData,
+  getFromMemoryCache,
 } from '../services/backend';
 import { ClientSearchAutocomplete } from '../components/common/ClientSearchAutocomplete';
 import { getTodayIso, formatHectareas } from '../utils/textSearch';
@@ -49,8 +55,9 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   const [modalidad, setModalidad] = useState<'Simple' | 'Múltiple' | null>(null);
 
   // Datos de cabecera
-  const [numeroSolicitud, setNumeroSolicitud] = useState<string>('—');
+  const [numeroSolicitud, setNumeroSolicitud] = useState<string>('');
   const [fecha, setFecha] = useState<string>(getTodayIso());
+  const [fechaVencimiento, setFechaVencimiento] = useState<string>('');
 
   // Personas
   const [selectedPropietario, setSelectedPropietario] = useState<Cliente | null>(null);
@@ -67,10 +74,10 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   // Observaciones
   const [observacion, setObservacion] = useState('');
 
-  // Listas cargadas desde Google Sheets
-  const [clientesList, setClientesList] = useState<Cliente[]>([]);
-  const [availableLotes, setAvailableLotes] = useState<Lote[]>([]);
-  const [availableBienes, setAvailableBienes] = useState<Bien[]>([]);
+  // Listas cargadas desde Google Sheets — inicializadas inmediatamente desde la caché en memoria si ya existen
+  const [clientesList, setClientesList] = useState<Cliente[]>(() => findAnyCachedData<Cliente>('clientes') || []);
+  const [availableLotes, setAvailableLotes] = useState<Lote[]>(() => findAnyCachedData<Lote>('lotes') || []);
+  const [availableBienes, setAvailableBienes] = useState<Bien[]>(() => findAnyCachedData<Bien>('bienes') || []);
 
   // Estados de modales para añadir Lote / Bien
   const [isLoteModalOpen, setIsLoteModalOpen] = useState(false);
@@ -82,15 +89,25 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   const [targetLoteGarantiaCon, setTargetLoteGarantiaCon] = useState<TipoGarantiaCon>('Farmer Rechnung');
   const [targetLoteCliente, setTargetLoteCliente] = useState<Cliente | null>(null);
 
+  // Búsqueda remota y estados para Modal de Lotes
+  const [loteSearchTerm, setLoteSearchTerm] = useState('');
+  const [isSearchingLotes, setIsSearchingLotes] = useState(false);
+  const [loteSearchError, setLoteSearchError] = useState(false);
+  const [loteSearchResults, setLoteSearchResults] = useState<Lote[] | null>(null);
+  const loteDebounceRef = React.useRef<any>(null);
+
   // Estado temporal al agregar Bien
   const [targetBien, setTargetBien] = useState<Bien | null>(null);
   const [targetBienValUSD, setTargetBienValUSD] = useState<number>(0);
   const [targetBienGarantiaCon, setTargetBienGarantiaCon] = useState<TipoGarantiaCon>('Farmer Rechnung');
   const [targetBienCliente, setTargetBienCliente] = useState<Cliente | null>(null);
 
-  // Búsqueda en modales
-  const [loteSearchTerm, setLoteSearchTerm] = useState('');
+  // Búsqueda remota y estados para Modal de Bienes
   const [bienSearchTerm, setBienSearchTerm] = useState('');
+  const [isSearchingBienes, setIsSearchingBienes] = useState(false);
+  const [bienSearchError, setBienSearchError] = useState(false);
+  const [bienSearchResults, setBienSearchResults] = useState<Bien[] | null>(null);
+  const bienDebounceRef = React.useRef<any>(null);
 
   // Estados de proceso
   const [isLoadingReferences, setIsLoadingReferences] = useState(false);
@@ -101,24 +118,32 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   // Vista de impresión sin guardar
   const [printPreviewGarantia, setPrintPreviewGarantia] = useState<Garantia | null>(null);
 
-  // Cargar datos iniciales desde Google Sheets
+  // Cargar datos iniciales desde Google Sheets (reutiliza caché si ya está disponible)
   const loadReferences = async () => {
-    setIsLoadingReferences(true);
+    const hasCachedLotes = findAnyCachedData('lotes') !== null;
+    const hasCachedBienes = findAnyCachedData('bienes') !== null;
+    const hasCachedClientes = findAnyCachedData('clientes') !== null;
+
+    if (!hasCachedLotes || !hasCachedBienes || !hasCachedClientes) {
+      setIsLoadingReferences(true);
+    }
     try {
-      const [nextSol, clientesRes, lotesRes, bienesRes] = await Promise.all([
-        getNextSolicitudNumber(),
+      const [clientesRes, lotesRes, bienesRes] = await Promise.all([
         getClientes({ page: 1, pageSize: 1000 }),
         getLotes({ page: 1, pageSize: 1000 }),
         getBienes({ page: 1, pageSize: 1000 }),
       ]);
-      setNumeroSolicitud(nextSol || '—');
-      setClientesList(Array.isArray(clientesRes?.data) ? clientesRes.data : []);
-      setAvailableLotes(Array.isArray(lotesRes?.data) ? lotesRes.data : []);
-      setAvailableBienes(Array.isArray(bienesRes?.data) ? bienesRes.data : []);
+      if (Array.isArray(clientesRes?.data) && clientesRes.data.length > 0) {
+        setClientesList(clientesRes.data);
+      }
+      if (Array.isArray(lotesRes?.data) && lotesRes.data.length > 0) {
+        setAvailableLotes(lotesRes.data);
+      }
+      if (Array.isArray(bienesRes?.data) && bienesRes.data.length > 0) {
+        setAvailableBienes(bienesRes.data);
+      }
     } catch {
-      setClientesList([]);
-      setAvailableLotes([]);
-      setAvailableBienes([]);
+      // Mantener lo que ya esté en memoria
     } finally {
       setIsLoadingReferences(false);
     }
@@ -127,6 +152,160 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   useEffect(() => {
     loadReferences();
   }, []);
+
+  // Manejador apertura y búsqueda de lotes
+  useEffect(() => {
+    if (isLoteModalOpen) {
+      setLoteSearchError(false);
+      if (availableLotes.length === 0) {
+        setIsSearchingLotes(true);
+        obtenerLotes()
+          .then((lotes) => {
+            setAvailableLotes(lotes);
+          })
+          .catch(() => {
+            setLoteSearchError(true);
+          })
+          .finally(() => {
+            setIsSearchingLotes(false);
+          });
+      } else {
+        setIsSearchingLotes(false);
+      }
+    }
+  }, [isLoteModalOpen]);
+
+  useEffect(() => {
+    if (!isLoteModalOpen) return;
+    const clean = loteSearchTerm.trim();
+    if (!clean) {
+      setLoteSearchResults(null);
+      setIsSearchingLotes(false);
+      setLoteSearchError(false);
+      return;
+    }
+
+    // 1. Revisar caché en memoria de búsquedas
+    const searchKey = `search:${clean.toLowerCase()}`;
+    const cached = getFromMemoryCache<Lote[]>('lotes', searchKey);
+    if (cached) {
+      setLoteSearchResults(cached);
+      setIsSearchingLotes(false);
+      setLoteSearchError(false);
+      return;
+    }
+
+    // 2. Si ya hay lotes en memoria, filtrar inmediatamente
+    if (availableLotes.length > 0) {
+      const lower = clean.toLowerCase();
+      const localMatches = availableLotes.filter(
+        (l) =>
+          (l.numeroLote || '').toLowerCase().includes(lower) ||
+          (l.propietario || '').toLowerCase().includes(lower) ||
+          String(l.cuentaPropietario || '').includes(lower) ||
+          (l.ubicacion || '').toLowerCase().includes(lower)
+      );
+      if (localMatches.length > 0) {
+        setLoteSearchResults(localMatches);
+      }
+    }
+
+    if (loteDebounceRef.current) clearTimeout(loteDebounceRef.current);
+    loteDebounceRef.current = setTimeout(async () => {
+      setIsSearchingLotes(true);
+      setLoteSearchError(false);
+      try {
+        const results = await buscarLotes(clean);
+        setLoteSearchResults(results);
+      } catch {
+        setLoteSearchError(true);
+      } finally {
+        setIsSearchingLotes(false);
+      }
+    }, 350);
+
+    return () => {
+      if (loteDebounceRef.current) clearTimeout(loteDebounceRef.current);
+    };
+  }, [loteSearchTerm, isLoteModalOpen]);
+
+  // Manejador apertura y búsqueda de bienes
+  useEffect(() => {
+    if (isBienModalOpen) {
+      setBienSearchError(false);
+      if (availableBienes.length === 0) {
+        setIsSearchingBienes(true);
+        obtenerBienes()
+          .then((bienes) => {
+            setAvailableBienes(bienes);
+          })
+          .catch(() => {
+            setBienSearchError(true);
+          })
+          .finally(() => {
+            setIsSearchingBienes(false);
+          });
+      } else {
+        setIsSearchingBienes(false);
+      }
+    }
+  }, [isBienModalOpen]);
+
+  useEffect(() => {
+    if (!isBienModalOpen) return;
+    const clean = bienSearchTerm.trim();
+    if (!clean) {
+      setBienSearchResults(null);
+      setIsSearchingBienes(false);
+      setBienSearchError(false);
+      return;
+    }
+
+    // 1. Revisar caché en memoria de búsquedas
+    const searchKey = `search:${clean.toLowerCase()}`;
+    const cached = getFromMemoryCache<Bien[]>('bienes', searchKey);
+    if (cached) {
+      setBienSearchResults(cached);
+      setIsSearchingBienes(false);
+      setBienSearchError(false);
+      return;
+    }
+
+    // 2. Si ya hay bienes en memoria, filtrar inmediatamente
+    if (availableBienes.length > 0) {
+      const lower = clean.toLowerCase();
+      const localMatches = availableBienes.filter(
+        (b) =>
+          (b.numeroPoliza || '').toLowerCase().includes(lower) ||
+          (b.propietario || '').toLowerCase().includes(lower) ||
+          String(b.cuentaPropietario || '').includes(lower) ||
+          (b.descripcion || '').toLowerCase().includes(lower) ||
+          (b.marca || '').toLowerCase().includes(lower) ||
+          (b.placa || '').toLowerCase().includes(lower)
+      );
+      if (localMatches.length > 0) {
+        setBienSearchResults(localMatches);
+      }
+    }
+
+    if (bienDebounceRef.current) clearTimeout(bienDebounceRef.current);
+    bienDebounceRef.current = setTimeout(async () => {
+      setIsSearchingBienes(true);
+      setBienSearchError(false);
+      try {
+        const results = await buscarBienes(clean);
+        setBienSearchResults(results);
+      } catch {
+        setBienSearchError(true);
+      } finally {
+        setIsSearchingBienes(false);
+      }
+    }, 350);
+
+    return () => {
+      if (bienDebounceRef.current) clearTimeout(bienDebounceRef.current);
+    };
+  }, [bienSearchTerm, isBienModalOpen]);
 
   // Totales separados
   const totalHectareas = selectedLotes.reduce((acc, l) => acc + (Number(l.hectareas) || 0), 0);
@@ -156,6 +335,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         ? lote.hectareasDisponibles
         : lote.hectareas;
     setTargetLoteHa(disp > 0 ? disp : lote.hectareas);
+    // Heredar el acreedor por defecto vigente en la Sección 3
     setTargetLoteGarantiaCon(garantiaConTipo);
     setTargetLoteCliente(selectedGarantiaCliente);
   };
@@ -164,6 +344,11 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
     if (!targetLote) return;
     if (targetLoteHa <= 0) {
       alert('Las hectáreas a poner en garantía deben ser mayores a 0.');
+      return;
+    }
+
+    if (targetLoteGarantiaCon === 'Cliente' && !targetLoteCliente) {
+      alert('Ha seleccionado "Cliente registrado", debe seleccionar obligatoriamente un cliente para este lote.');
       return;
     }
 
@@ -177,25 +362,15 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
       return;
     }
 
-    const gTipo = modalidad === 'Múltiple' ? targetLoteGarantiaCon : garantiaConTipo;
+    const gTipo = targetLoteGarantiaCon;
     const gNombre =
-      gTipo === 'Cliente' && (modalidad === 'Múltiple' ? targetLoteCliente : selectedGarantiaCliente)
-        ? `${
-            modalidad === 'Múltiple'
-              ? targetLoteCliente?.cuenta
-              : selectedGarantiaCliente?.cuenta
-          } — ${
-            modalidad === 'Múltiple'
-              ? targetLoteCliente?.nombre
-              : selectedGarantiaCliente?.nombre
-          }`
+      gTipo === 'Cliente' && targetLoteCliente
+        ? `${targetLoteCliente.cuenta} — ${targetLoteCliente.nombre}`
         : gTipo;
 
     const gCuenta =
-      gTipo === 'Cliente'
-        ? modalidad === 'Múltiple'
-          ? targetLoteCliente?.cuenta
-          : selectedGarantiaCliente?.cuenta
+      gTipo === 'Cliente' && targetLoteCliente
+        ? targetLoteCliente.cuenta
         : undefined;
 
     // Si aún no se seleccionó propietario general, autocompletar con el del primer lote
@@ -246,6 +421,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   const handleSelectBienForAdd = (bien: Bien) => {
     setTargetBien(bien);
     setTargetBienValUSD(bien.valorGarantiaUSD || 0);
+    // Heredar el acreedor por defecto vigente en la Sección 3
     setTargetBienGarantiaCon(garantiaConTipo);
     setTargetBienCliente(selectedGarantiaCliente);
   };
@@ -257,25 +433,20 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
       return;
     }
 
-    const gTipo = modalidad === 'Múltiple' ? targetBienGarantiaCon : garantiaConTipo;
+    if (targetBienGarantiaCon === 'Cliente' && !targetBienCliente) {
+      alert('Ha seleccionado "Cliente registrado", debe seleccionar obligatoriamente un cliente para este bien.');
+      return;
+    }
+
+    const gTipo = targetBienGarantiaCon;
     const gNombre =
-      gTipo === 'Cliente' && (modalidad === 'Múltiple' ? targetBienCliente : selectedGarantiaCliente)
-        ? `${
-            modalidad === 'Múltiple'
-              ? targetBienCliente?.cuenta
-              : selectedGarantiaCliente?.cuenta
-          } — ${
-            modalidad === 'Múltiple'
-              ? targetBienCliente?.nombre
-              : selectedGarantiaCliente?.nombre
-          }`
+      gTipo === 'Cliente' && targetBienCliente
+        ? `${targetBienCliente.cuenta} — ${targetBienCliente.nombre}`
         : gTipo;
 
     const gCuenta =
-      gTipo === 'Cliente'
-        ? modalidad === 'Múltiple'
-          ? targetBienCliente?.cuenta
-          : selectedGarantiaCliente?.cuenta
+      gTipo === 'Cliente' && targetBienCliente
+        ? targetBienCliente.cuenta
         : undefined;
 
     // Si aún no se seleccionó propietario general, autocompletar con el del bien
@@ -349,8 +520,9 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         : undefined;
 
     return {
-      numeroSolicitud,
+      numeroSolicitud: numeroSolicitud.trim(),
       fecha,
+      fechaVencimiento: fechaVencimiento || '',
       cuentaPropietario: mainPropCuenta,
       propietario: mainPropNombre,
       cuentaPrestatario: selectedPrestatario ? selectedPrestatario.cuenta : '',
@@ -411,8 +583,21 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
       return;
     }
 
-    if (modalidad === 'Simple' && garantiaConTipo === 'Cliente' && !selectedGarantiaCliente) {
-      setErrorMessage('Ha seleccionado "Cliente" en Garantía Con, debe especificar la cuenta del cliente.');
+    if (garantiaConTipo === 'Cliente' && !selectedGarantiaCliente) {
+      setErrorMessage('Ha seleccionado "Cliente registrado" como acreedor en la Sección 3, debe especificar el cliente.');
+      return;
+    }
+
+    // Validar que cada lote y bien con acreedor tipo Cliente tenga asignado su respectivo cliente
+    const loteSinCliente = selectedLotes.find((l) => l.garantiaConTipo === 'Cliente' && (!l.garantiaConCuenta || !l.garantiaConNombre));
+    if (loteSinCliente) {
+      setErrorMessage(`El Lote ${loteSinCliente.numeroLote} tiene como acreedor a un Cliente registrado pero no se ha especificado el cliente.`);
+      return;
+    }
+
+    const bienSinCliente = selectedBienes.find((b) => b.garantiaConTipo === 'Cliente' && (!b.garantiaConCuenta || !b.garantiaConNombre));
+    if (bienSinCliente) {
+      setErrorMessage(`El bien ${bienSinCliente.numeroPoliza} tiene como acreedor a un Cliente registrado pero no se ha especificado el cliente.`);
       return;
     }
 
@@ -519,31 +704,9 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
     );
   }
 
-  // Filtrado de lotes para el modal
-  const filteredAvailableLotes = availableLotes.filter((lote) => {
-    if (!loteSearchTerm.trim()) return true;
-    const t = loteSearchTerm.toLowerCase();
-    return (
-      (lote.numeroLote || '').toLowerCase().includes(t) ||
-      (lote.propietario || '').toLowerCase().includes(t) ||
-      String(lote.cuentaPropietario || '').includes(t) ||
-      (lote.ubicacion || '').toLowerCase().includes(t)
-    );
-  });
-
-  // Filtrado de bienes para el modal
-  const filteredAvailableBienes = availableBienes.filter((b) => {
-    if (!bienSearchTerm.trim()) return true;
-    const t = bienSearchTerm.toLowerCase();
-    return (
-      (b.numeroPoliza || '').toLowerCase().includes(t) ||
-      (b.propietario || '').toLowerCase().includes(t) ||
-      String(b.cuentaPropietario || '').includes(t) ||
-      (b.descripcion || '').toLowerCase().includes(t) ||
-      (b.marca || '').toLowerCase().includes(t) ||
-      (b.placa || '').toLowerCase().includes(t)
-    );
-  });
+  // Resultados a mostrar en los modales: búsquedas remotas o disponibles en memoria
+  const displayLotes = loteSearchResults !== null ? loteSearchResults : availableLotes;
+  const displayBienes = bienSearchResults !== null ? bienSearchResults : availableBienes;
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
@@ -623,23 +786,23 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         <div className="bg-white p-4 rounded border border-slate-200 shadow-2xs">
           <div className="flex items-center gap-2 pb-2 mb-3 border-b border-slate-100 text-xs font-bold uppercase tracking-wider text-slate-700">
             <Calendar className="w-4 h-4 text-emerald-800" />
-            <span>SECCIÓN 1 — Solicitud y Fecha</span>
+            <span>SECCIÓN 1 — Solicitud y Fechas</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                N.º de Solicitud (Asignado por Sistema)
+                N.º de Solicitud
               </label>
               <input
                 type="text"
                 value={numeroSolicitud}
-                readOnly
-                disabled
-                className="w-full px-3 py-1.5 text-xs bg-slate-100 border border-slate-300 rounded font-mono font-bold text-slate-700 cursor-not-allowed"
+                onChange={(e) => setNumeroSolicitud(e.target.value)}
+                placeholder="Ej. 7097 (opcional)"
+                className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded font-mono font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700"
               />
-              <p className="mt-1 text-[10px] text-slate-400">
-                El número correlativo es provisto por Google Sheets.
+              <p className="mt-1 text-[10px] text-slate-500">
+                Identificador de Farmer Rechnung, Campo Grande o solicitud física. Opcional (puede quedar vacío).
               </p>
             </div>
 
@@ -654,6 +817,35 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                 required
                 className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700"
               />
+              <p className="mt-1 text-[10px] text-slate-500">
+                Fecha oficial de registro de la garantía.
+              </p>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700">
+                  Fecha de Vencimiento
+                </label>
+                {fechaVencimiento && (
+                  <button
+                    type="button"
+                    onClick={() => setFechaVencimiento('')}
+                    className="text-[10px] text-red-600 hover:text-red-800 underline cursor-pointer"
+                  >
+                    Borrar fecha
+                  </button>
+                )}
+              </div>
+              <input
+                type="date"
+                value={fechaVencimiento}
+                onChange={(e) => setFechaVencimiento(e.target.value)}
+                className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700"
+              />
+              <p className="mt-1 text-[10px] text-slate-500">
+                Opcional. Dejar vacío si la garantía no tiene vencimiento.
+              </p>
             </div>
           </div>
         </div>
@@ -698,14 +890,16 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         <div className="bg-white p-4 rounded border border-slate-200 shadow-2xs">
           <div className="flex items-center gap-2 pb-2 mb-3 border-b border-slate-100 text-xs font-bold uppercase tracking-wider text-slate-700">
             <Building2 className="w-4 h-4 text-emerald-800" />
-            <span>SECCIÓN 3 — Garantía Constituida Con {modalidad === 'Múltiple' && '(General / Predeterminado)'}</span>
+            <span>
+              SECCIÓN 3 — Garantía Constituida Con {modalidad === 'Múltiple' ? '(General / Predeterminado)' : ''}
+            </span>
           </div>
 
           <div className="space-y-3">
             <p className="text-xs text-slate-600">
-              {modalidad === 'Simple'
-                ? 'Todos los elementos de esta garantía quedarán constituidos en favor de:'
-                : 'Seleccione el acreedor por defecto (en modalidad múltiple, cada elemento puede personalizarse):'}
+              {modalidad === 'Múltiple'
+                ? 'Seleccione el acreedor por defecto (en modalidad múltiple, cada elemento puede personalizarse):'
+                : 'Todos los elementos de esta garantía quedarán constituidos en favor de:'}
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -750,22 +944,22 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                     : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
                 }`}
               >
-                <span>Cliente Particular</span>
+                <span>Cliente registrado</span>
                 {garantiaConTipo === 'Cliente' && <CheckCircle2 className="w-3.5 h-3.5" />}
               </button>
             </div>
 
-            {/* Si selecciona "Cliente", mostrar buscador */}
+            {/* Si selecciona "Cliente registrado", mostrar buscador */}
             {garantiaConTipo === 'Cliente' && (
               <div className="pt-2">
                 <ClientSearchAutocomplete
-                  label="Cliente Receptor de la Garantía"
-                  placeholder="Buscar cliente por N.º de cuenta o nombre..."
+                  label="Cliente Receptor de la Garantía (Google Sheets)"
+                  placeholder="Buscar cliente registrado por N.º de cuenta o nombre..."
                   clientesList={clientesList}
                   selectedCuenta={selectedGarantiaCliente?.cuenta}
                   onSelect={setSelectedGarantiaCliente}
                   required
-                  helperText="Al seleccionar un cliente, se registrará como Cuenta — Nombre."
+                  helperText="Al seleccionar un cliente registrado, se vinculará su cuenta y nombre oficiales de Google Sheets."
                 />
               </div>
             )}
@@ -1011,14 +1205,46 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
             </div>
 
             <div className="overflow-y-auto p-3 flex-1 divide-y divide-slate-100">
-              {filteredAvailableLotes.length > 0 ? (
-                filteredAvailableLotes.map((lote) => {
+              {isSearchingLotes ? (
+                <div className="p-8 text-center text-slate-600 flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-5 h-5 animate-spin text-emerald-800" />
+                  <span className="font-semibold text-xs text-slate-700">Buscando lotes...</span>
+                  <span className="text-[11px] text-slate-400">Consultando registros oficiales en Google Sheets</span>
+                </div>
+              ) : loteSearchError ? (
+                <div className="p-8 text-center text-red-600 flex flex-col items-center justify-center gap-2 text-xs">
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                  <span className="font-semibold">No se pudo cargar la información.</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoteSearchError(false);
+                      setIsSearchingLotes(true);
+                      obtenerLotes(true)
+                        .then((lotes) => setAvailableLotes(lotes))
+                        .catch(() => setLoteSearchError(true))
+                        .finally(() => setIsSearchingLotes(false));
+                    }}
+                    className="mt-1 px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-semibold transition cursor-pointer"
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              ) : displayLotes.length > 0 ? (
+                displayLotes.map((lote) => {
                   const isBlocked = lote.estado === 'Bloqueado';
                   const isInactive = lote.estado === 'Inactivo';
                   const disp =
                     lote.hectareasDisponibles !== undefined && lote.hectareasDisponibles !== null
                       ? lote.hectareasDisponibles
                       : lote.hectareas;
+                  const haTotales = lote.hectareas || 0;
+                  const haEnGarantia =
+                    lote.hectareasEnGarantia !== undefined
+                      ? lote.hectareasEnGarantia
+                      : lote.enGarantia
+                      ? haTotales
+                      : 0;
 
                   const isAlreadySelected = selectedLotes.some((l) => l.idLote === lote.idLote);
                   const noDisp = disp <= 0;
@@ -1039,12 +1265,28 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                       onClick={() => !isDisabled && handleSelectLoteForAdd(lote)}
                     >
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-0.5">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                           <span className="font-mono font-bold text-emerald-950 bg-emerald-100 px-1.5 py-0.5 rounded text-[11px]">
                             Lote {lote.numeroLote}
                           </span>
                           <span className="font-semibold text-slate-800">{lote.propietario}</span>
                           <span className="text-[10px] text-slate-400 font-mono">Cta: {lote.cuentaPropietario}</span>
+                          {lote.encargado && (
+                            <span className="text-[10px] text-slate-500">
+                              (Encargado: {lote.encargado}{lote.cuentaEncargado ? ` - Cta: ${lote.cuentaEncargado}` : ''})
+                            </span>
+                          )}
+                          <span
+                            className={`px-1.5 py-0.2 rounded text-[9px] font-semibold border ${
+                              lote.estado === 'Disponible'
+                                ? 'bg-slate-50 text-slate-700 border-slate-200'
+                                : lote.estado === 'Bloqueado'
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-red-50 text-red-800 border-red-200'
+                            }`}
+                          >
+                            {lote.estado}
+                          </span>
                           {lote.enGarantia && disp > 0 && (
                             <span className="px-1 py-0.2 rounded text-[9px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
                               Parcialmente en Garantía
@@ -1053,7 +1295,10 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                         </div>
                         <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3">
                           <span>Ubicación: {lote.ubicacion || '—'}</span>
-                          <span>Total: <strong>{formatHectareas(lote.hectareas)}</strong></span>
+                          <span>Total: <strong>{formatHectareas(haTotales)}</strong></span>
+                          {haEnGarantia > 0 && (
+                            <span>En garantía: <strong className="text-purple-800">{formatHectareas(haEnGarantia)}</strong></span>
+                          )}
                           <span>
                             Disponible:{' '}
                             <strong className={disp > 0 ? 'text-emerald-800' : 'text-red-700'}>
@@ -1099,7 +1344,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-3">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
                       Hectáreas a Poner en Garantía:
@@ -1114,35 +1359,75 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                     />
                   </div>
 
-                  {modalidad === 'Múltiple' && (
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Garantía Con para este Lote:
+                  {modalidad === 'Múltiple' ? (
+                    <div className="pt-1 space-y-2 border-t border-emerald-200">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Garantía Constituida Con (Acreedor de este lote):
                       </label>
-                      <select
-                        value={targetLoteGarantiaCon}
-                        onChange={(e) => setTargetLoteGarantiaCon(e.target.value as TipoGarantiaCon)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs"
-                      >
-                        <option value="Farmer Rechnung">Farmer Rechnung</option>
-                        <option value="Campo Grande">Campo Grande</option>
-                        <option value="Cliente">Cliente</option>
-                      </select>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetLoteGarantiaCon('Farmer Rechnung');
+                            setTargetLoteCliente(null);
+                          }}
+                          className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                            targetLoteGarantiaCon === 'Farmer Rechnung'
+                              ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          Farmer Rechnung
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetLoteGarantiaCon('Campo Grande');
+                            setTargetLoteCliente(null);
+                          }}
+                          className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                            targetLoteGarantiaCon === 'Campo Grande'
+                              ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          Campo Grande
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setTargetLoteGarantiaCon('Cliente')}
+                          className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                            targetLoteGarantiaCon === 'Cliente'
+                              ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          Cliente registrado
+                        </button>
+                      </div>
+
+                      {targetLoteGarantiaCon === 'Cliente' && (
+                        <div className="pt-1">
+                          <ClientSearchAutocomplete
+                            label="Cliente Receptor de este Lote"
+                            placeholder="Buscar cliente registrado por cuenta o nombre..."
+                            clientesList={clientesList}
+                            selectedCuenta={targetLoteCliente?.cuenta}
+                            onSelect={setTargetLoteCliente}
+                            required
+                            helperText="Seleccione el cliente particular que recibe la garantía sobre este lote."
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-600 bg-emerald-100/50 p-2 rounded border border-emerald-200">
+                      Acreedor asignado: <strong>{garantiaConTipo === 'Cliente' && selectedGarantiaCliente ? `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}` : garantiaConTipo}</strong>
                     </div>
                   )}
                 </div>
-
-                {modalidad === 'Múltiple' && targetLoteGarantiaCon === 'Cliente' && (
-                  <div className="pt-1">
-                    <ClientSearchAutocomplete
-                      label="Cliente Receptor para este lote"
-                      clientesList={clientesList}
-                      selectedCuenta={targetLoteCliente?.cuenta}
-                      onSelect={setTargetLoteCliente}
-                      required
-                    />
-                  </div>
-                )}
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button
@@ -1198,8 +1483,33 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
             </div>
 
             <div className="overflow-y-auto p-3 flex-1 divide-y divide-slate-100">
-              {filteredAvailableBienes.length > 0 ? (
-                filteredAvailableBienes.map((bien) => {
+              {isSearchingBienes ? (
+                <div className="p-8 text-center text-slate-600 flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-5 h-5 animate-spin text-blue-800" />
+                  <span className="font-semibold text-xs text-slate-700">Buscando bienes...</span>
+                  <span className="text-[11px] text-slate-400">Consultando registros oficiales en Google Sheets</span>
+                </div>
+              ) : bienSearchError ? (
+                <div className="p-8 text-center text-red-600 flex flex-col items-center justify-center gap-2 text-xs">
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                  <span className="font-semibold">No se pudo cargar la información.</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBienSearchError(false);
+                      setIsSearchingBienes(true);
+                      obtenerBienes(true)
+                        .then((b) => setAvailableBienes(b))
+                        .catch(() => setBienSearchError(true))
+                        .finally(() => setIsSearchingBienes(false));
+                    }}
+                    className="mt-1 px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-semibold transition cursor-pointer"
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              ) : displayBienes.length > 0 ? (
+                displayBienes.map((bien) => {
                   const isBlocked = bien.estado === 'Bloqueado';
                   const isInactive = bien.estado === 'Inactivo';
                   const isAlreadyInWarranty = !!bien.enGarantia;
@@ -1221,7 +1531,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                       onClick={() => !isDisabled && handleSelectBienForAdd(bien)}
                     >
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-0.5">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                           <span className="font-mono font-bold text-blue-950 bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">
                             {bien.numeroPoliza}
                           </span>
@@ -1233,9 +1543,25 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                               ({bien.marca} {bien.modelo})
                             </span>
                           )}
+                          <span
+                            className={`px-1.5 py-0.2 rounded text-[9px] font-semibold border ${
+                              bien.estado === 'Disponible'
+                                ? 'bg-slate-50 text-slate-700 border-slate-200'
+                                : bien.estado === 'Bloqueado'
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-red-50 text-red-800 border-red-200'
+                            }`}
+                          >
+                            {bien.estado}
+                          </span>
                         </div>
                         <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3">
                           <span>Propietario: {bien.propietario} (Cta: {bien.cuentaPropietario})</span>
+                          {bien.encargado && (
+                            <span>
+                              Encargado: {bien.encargado}{bien.cuentaEncargado ? ` (Cta: ${bien.cuentaEncargado})` : ''}
+                            </span>
+                          )}
                           {bien.placa && <span>Placa: {bien.placa}</span>}
                           {bien.ubicacion && <span>Ubicación: {bien.ubicacion}</span>}
                         </div>
@@ -1274,7 +1600,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-3">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
                       VALOR EN GARANTÍA ($us.):
@@ -1290,35 +1616,75 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                     />
                   </div>
 
-                  {modalidad === 'Múltiple' && (
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Garantía Con para este Bien:
+                  {modalidad === 'Múltiple' ? (
+                    <div className="pt-1 space-y-2 border-t border-blue-200">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Garantía Constituida Con (Acreedor de este bien):
                       </label>
-                      <select
-                        value={targetBienGarantiaCon}
-                        onChange={(e) => setTargetBienGarantiaCon(e.target.value as TipoGarantiaCon)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs"
-                      >
-                        <option value="Farmer Rechnung">Farmer Rechnung</option>
-                        <option value="Campo Grande">Campo Grande</option>
-                        <option value="Cliente">Cliente</option>
-                      </select>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetBienGarantiaCon('Farmer Rechnung');
+                            setTargetBienCliente(null);
+                          }}
+                          className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                            targetBienGarantiaCon === 'Farmer Rechnung'
+                              ? 'bg-blue-800 text-white border-blue-900 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          Farmer Rechnung
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetBienGarantiaCon('Campo Grande');
+                            setTargetBienCliente(null);
+                          }}
+                          className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                            targetBienGarantiaCon === 'Campo Grande'
+                              ? 'bg-blue-800 text-white border-blue-900 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          Campo Grande
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setTargetBienGarantiaCon('Cliente')}
+                          className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                            targetBienGarantiaCon === 'Cliente'
+                              ? 'bg-blue-800 text-white border-blue-900 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          Cliente registrado
+                        </button>
+                      </div>
+
+                      {targetBienGarantiaCon === 'Cliente' && (
+                        <div className="pt-1">
+                          <ClientSearchAutocomplete
+                            label="Cliente Receptor de este Bien"
+                            placeholder="Buscar cliente registrado por cuenta o nombre..."
+                            clientesList={clientesList}
+                            selectedCuenta={targetBienCliente?.cuenta}
+                            onSelect={setTargetBienCliente}
+                            required
+                            helperText="Seleccione el cliente particular que recibe la garantía sobre este bien."
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-600 bg-blue-100/50 p-2 rounded border border-blue-200">
+                      Acreedor asignado: <strong>{garantiaConTipo === 'Cliente' && selectedGarantiaCliente ? `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}` : garantiaConTipo}</strong>
                     </div>
                   )}
                 </div>
-
-                {modalidad === 'Múltiple' && targetBienGarantiaCon === 'Cliente' && (
-                  <div className="pt-1">
-                    <ClientSearchAutocomplete
-                      label="Cliente Receptor para este bien"
-                      clientesList={clientesList}
-                      selectedCuenta={targetBienCliente?.cuenta}
-                      onSelect={setTargetBienCliente}
-                      required
-                    />
-                  </div>
-                )}
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button

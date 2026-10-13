@@ -11,6 +11,7 @@ import { Header } from './components/layout/Header';
 import { Sidebar, NavSection } from './components/layout/Sidebar';
 import { BottomNav } from './components/layout/BottomNav';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
+import { PWAUpdateBanner } from './components/common/PWAUpdateBanner';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 // Pages
@@ -24,35 +25,64 @@ import { BienesList } from './pages/BienesList';
 import { Reportes } from './pages/Reportes';
 import { Configuracion } from './pages/Configuracion';
 
-import { logout } from './services/backend';
+import { logout, preloadAllData, getLastSyncTime } from './services/backend';
 
 export default function App() {
   // Estado de autenticación en memoria (NO se guarda permanentemente en localStorage)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentSection, setCurrentSection] = useState<NavSection>('dashboard');
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   // Trigger para abrir modales de creación desde accesos rápidos del Dashboard
   const [openNewClienteDirect, setOpenNewClienteDirect] = useState(false);
   const [openNewLoteDirect, setOpenNewLoteDirect] = useState(false);
   const [openNewBienDirect, setOpenNewBienDirect] = useState(false);
 
+  const handleLoginSuccess = async () => {
+    setIsAuthenticated(true);
+    try {
+      await preloadAllData();
+      setLastSyncTime(getLastSyncTime() || 'Conectado');
+    } catch {
+      setLastSyncTime(getLastSyncTime() || 'Sin conexión (Modo offline)');
+    }
+  };
+
+  const handleRefreshData = async () => {
+    try {
+      await preloadAllData(true);
+      setLastSyncTime(getLastSyncTime() || 'Actualizado');
+    } catch {
+      setLastSyncTime(getLastSyncTime() || 'Error al actualizar');
+    }
+  };
+
   const handleLogout = () => {
     logout();
     setIsAuthenticated(false);
     setCurrentSection('dashboard');
+    setLastSyncTime(null);
   };
 
   // Si no está autenticado, mostrar la pantalla de acceso
   if (!isAuthenticated) {
-    return <Login onSuccessLogin={() => setIsAuthenticated(true)} />;
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-100 relative">
+        <PWAUpdateBanner />
+        <Login onSuccessLogin={handleLoginSuccess} />
+      </div>
+    );
   }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden">
+    <div className="h-screen flex flex-col bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden relative">
+      <PWAUpdateBanner />
       {/* Encabezado Superior (fijo en la parte superior) */}
       <Header
         onLogout={handleLogout}
         institucionName='ASOC. CIVIL "COLONIA CHIHUAHUA"'
+        lastSyncTime={lastSyncTime}
+        onRefreshData={handleRefreshData}
       />
 
       {/* Contenedor Principal: Sidebar + Contenido */}

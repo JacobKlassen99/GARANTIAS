@@ -105,6 +105,9 @@ export interface Garantia {
   idGarantia: string;
   numeroSolicitud: string;
   fecha: string;
+  fechaVencimiento?: string;
+  estadoVencimiento?: 'Vigente' | 'Próxima a vencer' | 'Vencida' | 'Sin vencimiento' | string;
+  diasRestantes?: number;
   cuentaPropietario: string | number;
   propietario: string;
   cuentaPrestatario: string | number;
@@ -126,6 +129,69 @@ export interface Garantia {
   cantidadBienes?: number;
   totalHectareas?: number;
   totalValorBienesUSD?: number;
+}
+
+export interface DetalleClienteGarantia {
+  idGarantia: string;
+  numeroSolicitud: string;
+  fecha: string;
+  fechaVencimiento?: string;
+  estadoVencimiento?: string;
+  garantiaConTipo: string;
+  garantiaConNombre?: string;
+  modalidad?: string;
+  tipoGarantia?: string;
+  rol?: string; // 'Propietario' | 'Prestatario' | 'Acreedor'
+  prestatario?: string;
+  propietario?: string;
+  lotesResumen?: string;
+  polizasResumen?: string;
+}
+
+export interface RelacionLoteGarantia {
+  hectareas: number;
+  garantiaConTipo?: string;
+  garantiaConCuenta?: string | number;
+  garantiaConNombre?: string;
+  numeroSolicitud?: string;
+  idGarantia?: string;
+}
+
+export interface DetalleClienteLote {
+  idLote: string;
+  numeroLote: string;
+  ubicacion: string;
+  hectareas: number;
+  hectareasEnGarantia: number;
+  hectareasDisponibles: number;
+  estado: EstadoRegistro;
+  relaciones?: RelacionLoteGarantia[];
+}
+
+export interface DetalleClienteBien {
+  idBien: string;
+  numeroPoliza: string;
+  tipoBien: string;
+  descripcion: string;
+  marca?: string;
+  modelo?: string;
+  placa?: string;
+  ubicacion: string;
+  estado: EstadoRegistro;
+  enGarantia?: boolean;
+  garantiaConCuenta?: string | number;
+  garantiaConNombre?: string;
+  valorGarantiaUSD?: number;
+  numeroSolicitud?: string;
+}
+
+export interface DetalleCliente {
+  cuenta: string | number;
+  nombre: string;
+  ci: string;
+  garantias: DetalleClienteGarantia[];
+  lotes: DetalleClienteLote[];
+  bienes: DetalleClienteBien[];
 }
 
 export interface ConfiguracionSistema {

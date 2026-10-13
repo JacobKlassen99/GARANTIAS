@@ -3,6 +3,7 @@ import {
   Users,
   Search,
   Plus,
+  Eye,
   Edit2,
   Trash2,
   ChevronLeft,
@@ -17,6 +18,7 @@ import { Cliente, QueryParams } from '../types';
 import { listarClientes, crearCliente, editarCliente, eliminarCliente } from '../services/backend';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { EmptyState } from '../components/common/EmptyState';
+import { DetalleClienteModal } from '../components/common/DetalleClienteModal';
 
 interface ClientesListProps {
   initialOpenNew?: boolean;
@@ -53,6 +55,9 @@ export const ClientesList: React.FC<ClientesListProps> = ({ initialOpenNew = fal
   // Modal Confirmar Eliminación
   const [clienteToDelete, setClienteToDelete] = useState<Cliente | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Modal Ver Detalle Cliente
+  const [clienteParaVer, setClienteParaVer] = useState<Cliente | null>(null);
 
   // Debounce para búsqueda (400ms)
   useEffect(() => {
@@ -339,7 +344,7 @@ export const ClientesList: React.FC<ClientesListProps> = ({ initialOpenNew = fal
                     <ArrowUpDown className="w-3 h-3 text-slate-400" />
                   </div>
                 </th>
-                <th className="py-1.5 px-3 font-bold text-center w-20">Acciones</th>
+                <th className="py-1.5 px-3 font-bold text-center w-28">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -383,9 +388,16 @@ export const ClientesList: React.FC<ClientesListProps> = ({ initialOpenNew = fal
                     <td className="py-1.5 px-3 text-center">
                       <div className="flex items-center justify-center gap-1">
                         <button
+                          onClick={() => setClienteParaVer(cliente)}
+                          title="Ver ficha integral del cliente"
+                          className="p-1 text-slate-600 hover:text-emerald-800 hover:bg-emerald-50 rounded transition cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
                           onClick={() => handleOpenEdit(cliente)}
                           title="Editar cliente"
-                          className="p-1 text-slate-600 hover:text-emerald-800 hover:bg-slate-100 rounded transition cursor-pointer"
+                          className="p-1 text-slate-600 hover:text-blue-800 hover:bg-slate-100 rounded transition cursor-pointer"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
@@ -556,6 +568,16 @@ export const ClientesList: React.FC<ClientesListProps> = ({ initialOpenNew = fal
         onConfirm={handleConfirmDelete}
         onCancel={() => setClienteToDelete(null)}
       />
+
+      {/* MODAL VER DETALLE CLIENTE */}
+      {clienteParaVer && (
+        <DetalleClienteModal
+          cuenta={clienteParaVer.cuenta}
+          nombre={clienteParaVer.nombre}
+          ci={clienteParaVer.ci}
+          onClose={() => setClienteParaVer(null)}
+        />
+      )}
     </div>
   );
 };

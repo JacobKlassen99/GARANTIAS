@@ -22,14 +22,23 @@ import {
   ConfiguracionSistema,
   GarantiaLoteRelacion,
   GarantiaBienRelacion,
+  DetalleCliente,
+  DetalleClienteGarantia,
+  DetalleClienteLote,
+  DetalleClienteBien,
+  RelacionLoteGarantia,
 } from '../types';
+import { calcularEstadoVencimiento } from '../utils/textSearch';
 import {
   getFromMemoryCache,
   setToMemoryCache,
   invalidateMemoryCache,
   clearAllMemoryCache,
   hasInMemoryCache,
+  fetchWithDeduplication,
+  findAnyCachedData,
 } from './dataCache';
+import { getIndexedCache, setIndexedCache, clearIndexedCache } from './indexedCache';
 
 export {
   getFromMemoryCache,
@@ -37,6 +46,8 @@ export {
   invalidateMemoryCache,
   clearAllMemoryCache,
   hasInMemoryCache,
+  fetchWithDeduplication,
+  findAnyCachedData,
 };
 
 // URL del Web App de Google Apps Script proporcionada por el usuario
@@ -53,6 +64,100 @@ let inMemorySession: {
   institucion: 'ASOC. CIVIL "COLONIA CHIHUAHUA"',
 };
 
+let lastSyncTimestamp: string | null = null;
+
+export function getLastSyncTime(): string | null {
+  return lastSyncTimestamp;
+}
+
+function extractArrayFromResponse(res: any): any[] {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.items)) return res.items;
+  if (Array.isArray(res.data)) return res.data;
+  if (Array.isArray(res.registros)) return res.registros;
+  if (Array.isArray(res.lotes)) return res.lotes;
+  if (Array.isArray(res.bienes)) return res.bienes;
+  if (Array.isArray(res.garantias)) return res.garantias;
+  if (res.resultado) return extractArrayFromResponse(res.resultado);
+  return [];
+}
+
+export async function preloadAllData(forceRefresh: boolean = false): Promise<void> {
+  if (!forceRefresh) {
+    try {
+      const cached = await getIndexedCache<any>('preload_data');
+      if (cached) {
+        if (cached.initData) setToMemoryCache('init_data', cached.initData);
+        if (cached.clientes) setToMemoryCache('clientes', cached.clientes, { page: 1, pageSize: 1000 });
+        if (cached.lotes) setToMemoryCache('lotes', cached.lotes, { page: 1, pageSize: 1000 });
+        if (cached.bienes) setToMemoryCache('bienes', cached.bienes, { page: 1, pageSize: 1000 });
+        if (cached.garantias) setToMemoryCache('garantias', cached.garantias, { page: 1, pageSize: 1000 });
+        if (cached.dashboard) setToMemoryCache('dashboard', cached.dashboard);
+        if (cached.timestamp) lastSyncTimestamp = cached.timestamp;
+      }
+    } catch {
+      // Ignorar error de IDB
+    }
+  }
+
+  try {
+    const [initData, clientesRes, lotesRes, bienesRes, garantiasRes] = await Promise.all([
+      obtenerDatosIniciales().catch(() => null),
+      listarClientes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+      listarLotes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+      listarBienes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+      listarGarantias({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+    ]);
+
+    if (initData || clientesRes || lotesRes || bienesRes || garantiasRes) {
+      lastSyncTimestamp = new Date().toLocaleString('es-BO', {
+        dateStyle: 'short',
+        timeStyle: 'medium',
+      });
+
+      const garantias = garantiasRes?.data || (Array.isArray(garantiasRes) ? garantiasRes : []);
+      const lotes = lotesRes?.data || (Array.isArray(lotesRes) ? lotesRes : []);
+      const bienes = bienesRes?.data || (Array.isArray(bienesRes) ? bienesRes : []);
+
+      const stats: DashboardStats = {
+        garantiasActivas: garantias.length,
+        hectareasEnGarantia: lotes.filter((l: any) => l.enGarantia).reduce((acc: number, l: any) => acc + (l.hectareasEnGarantia || l.hectareas || 0), 0),
+        hectareasDisponibles: lotes.filter((l: any) => !l.enGarantia).reduce((acc: number, l: any) => acc + (l.hectareas || 0), 0),
+        bienesEnGarantia: bienes.filter((b: any) => b.enGarantia).length,
+        valorBienesEnGarantiaUSD: bienes.filter((b: any) => b.enGarantia).reduce((acc: number, b: any) => acc + (b.valorGarantiaUSD || 0), 0),
+        garantiasExternas: garantias.filter((g: any) => g.garantiaConTipo === 'Farmer Rechnung' || g.garantiaConTipo === 'Campo Grande').length,
+        lotesBloqueados: lotes.filter((l: any) => l.estado === 'Bloqueado').length,
+        bienesBloqueados: bienes.filter((b: any) => b.estado === 'Bloqueado').length,
+      };
+      setToMemoryCache('dashboard', stats);
+
+      await setIndexedCache('preload_data', {
+        initData,
+        clientes: clientesRes,
+        lotes: lotesRes,
+        bienes: bienesRes,
+        garantias: garantiasRes,
+        dashboard: stats,
+        timestamp: lastSyncTimestamp,
+      });
+    }
+  } catch (err) {
+    const cached = await getIndexedCache<any>('preload_data');
+    if (cached) {
+      if (cached.initData) setToMemoryCache('init_data', cached.initData);
+      if (cached.clientes) setToMemoryCache('clientes', cached.clientes, { page: 1, pageSize: 1000 });
+      if (cached.lotes) setToMemoryCache('lotes', cached.lotes, { page: 1, pageSize: 1000 });
+      if (cached.bienes) setToMemoryCache('bienes', cached.bienes, { page: 1, pageSize: 1000 });
+      if (cached.garantias) setToMemoryCache('garantias', cached.garantias, { page: 1, pageSize: 1000 });
+      if (cached.dashboard) setToMemoryCache('dashboard', cached.dashboard);
+      lastSyncTimestamp = cached.timestamp ? `${cached.timestamp} (Modo Offline)` : 'Sin conexión';
+    } else {
+      lastSyncTimestamp = 'Sin conexión (Modo offline)';
+    }
+  }
+}
+
 export class BackendConnectionError extends Error {
   constructor(message: string = 'No se pudo conectar con el servidor.') {
     super(message);
@@ -68,11 +173,13 @@ export function getSessionState() {
 }
 
 /**
- * Cierre de sesión (limpia el estado en memoria)
+ * Cierre de sesión (limpia el estado en memoria y caché IndexedDB)
  */
 export function logout(): void {
   inMemorySession.isAuthenticated = false;
   clearAllMemoryCache();
+  clearIndexedCache();
+  lastSyncTimestamp = null;
 }
 
 /**
@@ -85,42 +192,54 @@ export async function callAppsScript<T>(accion: string, datos: Record<string, an
     throw new BackendConnectionError('No se ha configurado la dirección del servidor.');
   }
 
-  try {
-    const payload = JSON.stringify({
-      accion,
-      datos: datos || {},
-    });
+  const isReadOnly =
+    accion.startsWith('obtener') || accion.startsWith('listar') || accion.startsWith('buscar');
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: payload,
-    });
+  const executeRequest = async (): Promise<T> => {
+    try {
+      const payload = JSON.stringify({
+        accion,
+        datos: datos || {},
+      });
 
-    if (!response.ok) {
-      throw new BackendConnectionError(`Error de comunicación con el servidor (${response.status}).`);
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: payload,
+      });
+
+      if (!response.ok) {
+        throw new BackendConnectionError(`Error de comunicación con el servidor (${response.status}).`);
+      }
+
+      const data = await response.json();
+
+      if (!data || data.ok === false) {
+        const msg = data?.mensaje || data?.message || data?.error || 'No se pudo procesar la solicitud.';
+        throw new Error(msg);
+      }
+
+      return (data.resultado !== undefined ? data.resultado : data) as T;
+    } catch (error: any) {
+      if (error instanceof BackendConnectionError) {
+        throw error;
+      }
+      // Si ya es un Error lanzado desde la validación del backend, propagar su mensaje
+      if (error && error.message && !error.message.includes('fetch') && !error.message.includes('Failed to fetch')) {
+        throw error;
+      }
+      throw new BackendConnectionError('No se pudo conectar con el servidor.');
     }
+  };
 
-    const data = await response.json();
-
-    if (!data || data.ok === false) {
-      const msg = data?.mensaje || data?.message || data?.error || 'No se pudo procesar la solicitud.';
-      throw new Error(msg);
-    }
-
-    return (data.resultado !== undefined ? data.resultado : data) as T;
-  } catch (error: any) {
-    if (error instanceof BackendConnectionError) {
-      throw error;
-    }
-    // Si ya es un Error lanzado desde la validación del backend, propagar su mensaje
-    if (error && error.message && !error.message.includes('fetch') && !error.message.includes('Failed to fetch')) {
-      throw error;
-    }
-    throw new BackendConnectionError('No se pudo conectar con el servidor.');
+  if (isReadOnly) {
+    const dedupKey = `${accion}:${JSON.stringify(datos || {})}`;
+    return fetchWithDeduplication(dedupKey, executeRequest);
   }
+
+  return executeRequest();
 }
 
 /**
@@ -229,22 +348,49 @@ export async function getDashboardStats(forceRefresh: boolean = false): Promise<
     const cached = getFromMemoryCache<DashboardStats>('dashboard');
     if (cached) return cached;
   }
-  const res = await callAppsScript<any>('obtenerResumenDashboard', {});
+
+  const garantiasCached = findAnyCachedData<Garantia>('garantias');
+  const lotesCached = findAnyCachedData<Lote>('lotes');
+  const bienesCached = findAnyCachedData<Bien>('bienes');
+
+  let garantias: Garantia[] = garantiasCached || [];
+  let lotes: Lote[] = lotesCached || [];
+  let bienes: Bien[] = bienesCached || [];
+
+  if (forceRefresh || garantias.length === 0 || lotes.length === 0 || bienes.length === 0) {
+    try {
+      const [gRes, lRes, bRes] = await Promise.all([
+        listarGarantias({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+        listarLotes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+        listarBienes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+      ]);
+      if (gRes) garantias = gRes.data || (Array.isArray(gRes) ? gRes : garantias);
+      if (lRes) lotes = lRes.data || (Array.isArray(lRes) ? lRes : lotes);
+      if (bRes) bienes = bRes.data || (Array.isArray(bRes) ? bRes : bienes);
+    } catch {
+      // Ignorar y usar lo disponible
+    }
+  }
+
   const stats: DashboardStats = {
-    garantiasActivas: typeof res?.garantiasActivas === 'number' ? res.garantiasActivas : null,
-    hectareasEnGarantia: typeof res?.hectareasEnGarantia === 'number' ? res.hectareasEnGarantia : null,
-    hectareasDisponibles: typeof res?.hectareasDisponibles === 'number' ? res.hectareasDisponibles : null,
-    bienesEnGarantia: typeof res?.bienesEnGarantia === 'number' ? res.bienesEnGarantia : null,
-    valorBienesEnGarantiaUSD:
-      typeof res?.valorBienesEnGarantiaUSD === 'number'
-        ? res.valorBienesEnGarantiaUSD
-        : typeof res?.valorBienesEnGarantia === 'number'
-        ? res.valorBienesEnGarantia
-        : null,
-    garantiasExternas: typeof res?.garantiasExternas === 'number' ? res.garantiasExternas : null,
-    lotesBloqueados: typeof res?.lotesBloqueados === 'number' ? res.lotesBloqueados : null,
-    bienesBloqueados: typeof res?.bienesBloqueados === 'number' ? res.bienesBloqueados : null,
+    garantiasActivas: garantias.length,
+    hectareasEnGarantia: lotes
+      .filter((l) => l.enGarantia)
+      .reduce((acc, l) => acc + (l.hectareasEnGarantia || l.hectareas || 0), 0),
+    hectareasDisponibles: lotes
+      .filter((l) => !l.enGarantia)
+      .reduce((acc, l) => acc + (l.hectareas || 0), 0),
+    bienesEnGarantia: bienes.filter((b) => b.enGarantia).length,
+    valorBienesEnGarantiaUSD: bienes
+      .filter((b) => b.enGarantia)
+      .reduce((acc, b) => acc + (b.valorGarantiaUSD || 0), 0),
+    garantiasExternas: garantias.filter(
+      (g) => g.garantiaConTipo === 'Farmer Rechnung' || g.garantiaConTipo === 'Campo Grande'
+    ).length,
+    lotesBloqueados: lotes.filter((l) => l.estado === 'Bloqueado').length,
+    bienesBloqueados: bienes.filter((b) => b.estado === 'Bloqueado').length,
   };
+
   setToMemoryCache('dashboard', stats);
   return stats;
 }
@@ -348,10 +494,37 @@ export function normalizarBien(item: any): Bien {
 }
 
 export function normalizarGarantia(item: any): Garantia {
+  const fechaVencimiento =
+    item?.['Fecha de Vencimiento'] ||
+    item?.fechaVencimiento ||
+    item?.['Fecha Vencimiento'] ||
+    '';
+
+  const diasRestantes =
+    typeof item?.diasRestantes === 'number'
+      ? item.diasRestantes
+      : typeof item?.['Días Restantes'] === 'number'
+      ? item['Días Restantes']
+      : undefined;
+
+  let estadoVencimiento = item?.['Estado Vencimiento'] || item?.estadoVencimiento || '';
+  if (!estadoVencimiento && fechaVencimiento) {
+    estadoVencimiento = calcularEstadoVencimiento(fechaVencimiento).estado;
+  } else if (!estadoVencimiento) {
+    estadoVencimiento = 'Sin vencimiento';
+  }
+
   return {
     idGarantia: item?.['ID Garantía'] || item?.idGarantia || '',
-    numeroSolicitud: String(item?.['N.º Solicitud'] ?? item?.numeroSolicitud ?? ''),
+    numeroSolicitud: item?.['N.º Solicitud'] !== undefined && item?.['N.º Solicitud'] !== null
+      ? String(item['N.º Solicitud'])
+      : item?.numeroSolicitud !== undefined && item?.numeroSolicitud !== null
+      ? String(item.numeroSolicitud)
+      : '',
     fecha: item?.['Fecha'] || item?.fecha || '',
+    fechaVencimiento,
+    estadoVencimiento,
+    diasRestantes,
     cuentaPropietario: item?.['Cuenta Propietario'] ?? item?.cuentaPropietario ?? '',
     propietario: item?.['Propietario'] || item?.propietario || '',
     cuentaPrestatario: item?.['Cuenta Prestatario'] ?? item?.cuentaPrestatario ?? '',
@@ -409,11 +582,21 @@ export async function listarClientes(
   return paginatedResult;
 }
 
-export async function buscarClientes(texto: string): Promise<Cliente[]> {
-  if (!texto || !texto.trim()) return [];
-  const res = await callAppsScript<any>('buscarClientes', { texto: texto.trim() });
+export async function buscarClientes(texto: string, forceRefresh: boolean = false): Promise<Cliente[]> {
+  const clean = texto ? texto.trim() : '';
+  if (!clean) return [];
+
+  const searchKey = `search:${clean.toLowerCase()}`;
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<Cliente[]>('clientes', searchKey);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('buscarClientes', { texto: clean });
   const rawItems = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : [];
-  return rawItems.map(normalizarCliente);
+  const items = rawItems.map(normalizarCliente);
+  setToMemoryCache('clientes', items, searchKey);
+  return items;
 }
 
 export async function obtenerClientePorCuenta(cuenta: string | number): Promise<Cliente | null> {
@@ -430,7 +613,7 @@ export async function crearCliente(cliente: { cuenta: string | number; nombre: s
     nombre: cliente.nombre ? cliente.nombre.trim() : '',
     ci: cliente.ci ? cliente.ci.trim() : '',
   });
-  invalidateMemoryCache('clientes');
+  invalidateMemoryCache(['clientes', 'client-detail']);
   return result;
 }
 
@@ -440,14 +623,139 @@ export async function editarCliente(cliente: { cuenta: string | number; nombre: 
     nombre: cliente.nombre ? cliente.nombre.trim() : '',
     ci: cliente.ci ? cliente.ci.trim() : '',
   });
-  invalidateMemoryCache('clientes');
+  invalidateMemoryCache(['clientes', 'client-detail']);
   return result;
 }
 
 export async function eliminarCliente(cuenta: string | number): Promise<any> {
   const result = await callAppsScript('eliminarCliente', { cuenta });
-  invalidateMemoryCache('clientes');
+  invalidateMemoryCache(['clientes', 'client-detail']);
   return result;
+}
+
+/**
+ * SERVICIO VISTA INTEGRAL DE CLIENTE
+ * accion: obtenerDetalleCliente
+ * datos: { cuenta: "NUMERO_CUENTA" }
+ */
+export async function obtenerDetalleCliente(
+  cuenta: string | number,
+  forceRefresh: boolean = false
+): Promise<DetalleCliente | null> {
+  const clean = String(cuenta).trim();
+  if (!clean) return null;
+
+  const cacheKey = `client:${clean}`;
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<DetalleCliente>('client-detail', cacheKey);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('obtenerDetalleCliente', { cuenta: clean });
+  if (!res) return null;
+
+  const clienteData = res.cliente || res;
+  const rawGarantias = Array.isArray(res.garantias) ? res.garantias : [];
+  const rawLotes = Array.isArray(res.lotes) ? res.lotes : [];
+  const rawBienes = Array.isArray(res.bienes) ? res.bienes : [];
+
+  const detalle: DetalleCliente = {
+    cuenta: clienteData.cuenta ?? clean,
+    nombre: clienteData.nombre || '',
+    ci: clienteData.ci || '',
+    garantias: rawGarantias.map((g: any) => ({
+      idGarantia: g['ID Garantía'] || g.idGarantia || '',
+      numeroSolicitud:
+        g['N.º Solicitud'] !== undefined
+          ? String(g['N.º Solicitud'])
+          : g.numeroSolicitud
+          ? String(g.numeroSolicitud)
+          : '',
+      fecha: g['Fecha'] || g.fecha || '',
+      fechaVencimiento:
+        g['Fecha de Vencimiento'] || g.fechaVencimiento || g['Fecha Vencimiento'] || '',
+      estadoVencimiento: g['Estado Vencimiento'] || g.estadoVencimiento || '',
+      garantiaConTipo: g['Garantía con Tipo'] || g.garantiaConTipo || '',
+      garantiaConNombre: g['Garantía con Nombre'] || g.garantiaConNombre || '',
+      modalidad: g['Modalidad'] || g.modalidad || '',
+      tipoGarantia: g['Tipo de Garantía'] || g.tipoGarantia || '',
+      rol: g.rol || '',
+      prestatario: g['Prestatario'] || g.prestatario || '',
+      propietario: g['Propietario'] || g.propietario || '',
+      lotesResumen: g['Lotes'] || g.lotesResumen || '',
+      polizasResumen: g['Pólizas'] || g.polizasResumen || '',
+    })),
+    lotes: rawLotes.map((l: any) => {
+      const haTotales =
+        typeof l['Hectáreas'] === 'number' ? l['Hectáreas'] : Number(l.hectareas) || 0;
+      const haEnGarantia =
+        typeof l['Hectáreas en Garantía'] === 'number'
+          ? l['Hectáreas en Garantía']
+          : Number(l.hectareasEnGarantia) || 0;
+      const haDisponibles =
+        typeof l['Hectáreas Disponibles'] === 'number'
+          ? l['Hectáreas Disponibles']
+          : Number(l.hectareasDisponibles) || Math.max(0, haTotales - haEnGarantia);
+
+      return {
+        idLote: l['ID Lote'] || l.idLote || '',
+        numeroLote: l['N.º de Lote'] || l.numeroLote || '',
+        ubicacion: l['Ubicación'] || l.ubicacion || '',
+        hectareas: haTotales,
+        hectareasEnGarantia: haEnGarantia,
+        hectareasDisponibles: haDisponibles,
+        estado: l['Estado'] || l.estado || 'Disponible',
+        relaciones: Array.isArray(l.relaciones)
+          ? l.relaciones
+          : Array.isArray(l.garantias)
+          ? l.garantias.map((rg: any) => ({
+              hectareas:
+                typeof rg.hectareas === 'number'
+                  ? rg.hectareas
+                  : Number(rg['Hectáreas']) || 0,
+              garantiaConTipo: rg['Garantía con Tipo'] || rg.garantiaConTipo || '',
+              garantiaConCuenta: rg['Garantía con Cuenta'] ?? rg.garantiaConCuenta ?? '',
+              garantiaConNombre: rg['Garantía con Nombre'] || rg.garantiaConNombre || '',
+              numeroSolicitud: rg['N.º Solicitud'] || rg.numeroSolicitud || '',
+              idGarantia: rg['ID Garantía'] || rg.idGarantia || '',
+            }))
+          : l.garantiaConNombre || l['Garantía con Nombre']
+          ? [
+              {
+                hectareas: haEnGarantia,
+                garantiaConTipo: l['Garantía con Tipo'] || l.garantiaConTipo || '',
+                garantiaConCuenta: l['Garantía con Cuenta'] ?? l.garantiaConCuenta ?? '',
+                garantiaConNombre: l['Garantía con Nombre'] || l.garantiaConNombre || '',
+                numeroSolicitud: l['N.º Solicitud'] || l.numeroSolicitud || '',
+                idGarantia: l['ID Garantía'] || l.idGarantia || '',
+              },
+            ]
+          : [],
+      };
+    }),
+    bienes: rawBienes.map((b: any) => ({
+      idBien: b['ID Bien'] || b.idBien || '',
+      numeroPoliza: b['N.º Póliza'] || b.numeroPoliza || '',
+      tipoBien: b['Tipo de Bien'] || b.tipoBien || '',
+      descripcion: b['Descripción'] || b.descripcion || '',
+      marca: b['Marca'] || b.marca || '',
+      modelo: b['Modelo'] || b.modelo || '',
+      placa: b['Placa'] || b.placa || '',
+      ubicacion: b['Ubicación'] || b.ubicacion || '',
+      estado: b['Estado'] || b.estado || 'Disponible',
+      enGarantia: b['En Garantía'] ?? b.enGarantia ?? false,
+      garantiaConCuenta: b['Garantía con Cuenta'] ?? b.garantiaConCuenta ?? '',
+      garantiaConNombre: b['Garantía con Nombre'] || b.garantiaConNombre || '',
+      valorGarantiaUSD:
+        typeof b['Valor en Garantía ($us.)'] === 'number'
+          ? b['Valor en Garantía ($us.)']
+          : Number(b.valorGarantiaUSD) || 0,
+      numeroSolicitud: b['N.º Solicitud'] || b.numeroSolicitud || '',
+    })),
+  };
+
+  setToMemoryCache('client-detail', detalle, cacheKey);
+  return detalle;
 }
 
 // Aliases para retrocompatibilidad
@@ -498,19 +806,29 @@ export async function obtenerLotes(forceRefresh: boolean = false): Promise<Lote[
   if (!forceRefresh) {
     const cached = getFromMemoryCache<Lote[]>('lotes', 'all');
     if (cached) return cached;
+    const anyCached = findAnyCachedData<Lote>('lotes');
+    if (anyCached && anyCached.length > 0) return anyCached;
   }
-  const res = await callAppsScript<any>('obtenerLotes', {});
-  const rawItems = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : [];
-  const items = rawItems.map(normalizarLote);
-  setToMemoryCache('lotes', items, 'all');
-  return items;
+  const paginated = await listarLotes({ page: 1, pageSize: 1000 }, forceRefresh);
+  setToMemoryCache('lotes', paginated.data, 'all');
+  return paginated.data;
 }
 
-export async function buscarLotes(texto: string): Promise<Lote[]> {
-  if (!texto || !texto.trim()) return [];
-  const res = await callAppsScript<any>('buscarLotes', { texto: texto.trim() });
+export async function buscarLotes(texto: string, forceRefresh: boolean = false): Promise<Lote[]> {
+  const clean = texto ? texto.trim() : '';
+  if (!clean) return [];
+
+  const searchKey = `search:${clean.toLowerCase()}`;
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<Lote[]>('lotes', searchKey);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('buscarLotes', { texto: clean });
   const rawItems = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : [];
-  return rawItems.map(normalizarLote);
+  const items = rawItems.map(normalizarLote);
+  setToMemoryCache('lotes', items, searchKey);
+  return items;
 }
 
 export async function obtenerLotePorId(idLote: string): Promise<Lote | null> {
@@ -534,7 +852,7 @@ export async function crearLote(lote: Partial<Lote>): Promise<any> {
     fechaBloqueo: lote.fechaBloqueo || '',
     observacion: lote.observacion ? lote.observacion.trim() : '',
   });
-  invalidateMemoryCache(['lotes', 'dashboard']);
+  invalidateMemoryCache(['lotes', 'dashboard', 'client-detail']);
   return result;
 }
 
@@ -553,13 +871,13 @@ export async function editarLote(lote: Partial<Lote>): Promise<any> {
     fechaBloqueo: lote.fechaBloqueo || '',
     observacion: lote.observacion ? lote.observacion.trim() : '',
   });
-  invalidateMemoryCache(['lotes', 'dashboard']);
+  invalidateMemoryCache(['lotes', 'dashboard', 'client-detail']);
   return result;
 }
 
 export async function eliminarLote(idLote: string): Promise<any> {
   const result = await callAppsScript('eliminarLote', { idLote });
-  invalidateMemoryCache(['lotes', 'dashboard']);
+  invalidateMemoryCache(['lotes', 'dashboard', 'client-detail']);
   return result;
 }
 
@@ -626,19 +944,29 @@ export async function obtenerBienes(forceRefresh: boolean = false): Promise<Bien
   if (!forceRefresh) {
     const cached = getFromMemoryCache<Bien[]>('bienes', 'all');
     if (cached) return cached;
+    const anyCached = findAnyCachedData<Bien>('bienes');
+    if (anyCached && anyCached.length > 0) return anyCached;
   }
-  const res = await callAppsScript<any>('obtenerBienes', {});
-  const rawItems = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : [];
-  const items = rawItems.map(normalizarBien);
-  setToMemoryCache('bienes', items, 'all');
-  return items;
+  const paginated = await listarBienes({ page: 1, pageSize: 1000 }, forceRefresh);
+  setToMemoryCache('bienes', paginated.data, 'all');
+  return paginated.data;
 }
 
-export async function buscarBienes(texto: string): Promise<Bien[]> {
-  if (!texto || !texto.trim()) return [];
-  const res = await callAppsScript<any>('buscarBienes', { texto: texto.trim() });
+export async function buscarBienes(texto: string, forceRefresh: boolean = false): Promise<Bien[]> {
+  const clean = texto ? texto.trim() : '';
+  if (!clean) return [];
+
+  const searchKey = `search:${clean.toLowerCase()}`;
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<Bien[]>('bienes', searchKey);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('buscarBienes', { texto: clean });
   const rawItems = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : [];
-  return rawItems.map(normalizarBien);
+  const items = rawItems.map(normalizarBien);
+  setToMemoryCache('bienes', items, searchKey);
+  return items;
 }
 
 export async function obtenerBienPorId(idBien: string): Promise<Bien | null> {
@@ -666,7 +994,7 @@ export async function crearBien(bien: Partial<Bien>): Promise<any> {
     fechaBloqueo: bien.fechaBloqueo || '',
     observacion: bien.observacion ? bien.observacion.trim() : '',
   });
-  invalidateMemoryCache(['bienes', 'dashboard']);
+  invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
   return result;
 }
 
@@ -689,13 +1017,13 @@ export async function editarBien(bien: Partial<Bien>): Promise<any> {
     fechaBloqueo: bien.fechaBloqueo || '',
     observacion: bien.observacion ? bien.observacion.trim() : '',
   });
-  invalidateMemoryCache(['bienes', 'dashboard']);
+  invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
   return result;
 }
 
 export async function eliminarBien(idBien: string): Promise<any> {
   const result = await callAppsScript('eliminarBien', { idBien });
-  invalidateMemoryCache(['bienes', 'dashboard']);
+  invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
   return result;
 }
 
@@ -763,11 +1091,9 @@ export async function obtenerGarantias(forceRefresh: boolean = false): Promise<G
     const cached = getFromMemoryCache<Garantia[]>('garantias', 'all');
     if (cached) return cached;
   }
-  const res = await callAppsScript<any>('obtenerGarantias', {});
-  const rawItems = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : [];
-  const items = rawItems.map(normalizarGarantia);
-  setToMemoryCache('garantias', items, 'all');
-  return items;
+  const paginated = await listarGarantias({ page: 1, pageSize: 1000 }, forceRefresh);
+  setToMemoryCache('garantias', paginated.data, 'all');
+  return paginated.data;
 }
 
 export async function obtenerGarantiaCompleta(idGarantia: string): Promise<Garantia | null> {
@@ -848,9 +1174,34 @@ export async function obtenerGarantiaCompleta(idGarantia: string): Promise<Garan
 }
 
 export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
+  // Verificar disponibilidad actual en el servidor antes de enviar
+  try {
+    const lotesActuales = await listarLotes({ page: 1, pageSize: 1000 }, true);
+    if (Array.isArray(garantia.lotes)) {
+      for (const reqLote of garantia.lotes) {
+        const serverLote = lotesActuales.data.find((l) => String(l.idLote) === String(reqLote.idLote));
+        if (!serverLote) {
+          throw new Error(`El lote ${reqLote.numeroLote} ya no existe en el sistema.`);
+        }
+        if (serverLote.estado === 'Bloqueado' || serverLote.estado === 'Inactivo') {
+          throw new Error(`El lote ${serverLote.numeroLote} se encuentra ${serverLote.estado.toLowerCase()} y no puede ser dado en garantía.`);
+        }
+        const disp = serverLote.hectareasDisponibles !== undefined ? serverLote.hectareasDisponibles : serverLote.hectareas;
+        if (Number(reqLote.hectareas) > Number(disp)) {
+          throw new Error(`El lote ${serverLote.numeroLote} solo tiene ${disp} hectáreas disponibles en el servidor.`);
+        }
+      }
+    }
+  } catch (err: any) {
+    if (err && err.message && !err.message.includes('BackendConnectionError')) {
+      throw err;
+    }
+  }
+
   const result = await callAppsScript('crearGarantia', {
-    numeroSolicitud: garantia.numeroSolicitud,
+    numeroSolicitud: garantia.numeroSolicitud || '',
     fecha: garantia.fecha,
+    fechaVencimiento: garantia.fechaVencimiento || '',
     cuentaPropietario: garantia.cuentaPropietario,
     propietario: garantia.propietario,
     cuentaPrestatario: garantia.cuentaPrestatario,
@@ -891,8 +1242,9 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
 export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> {
   const result = await callAppsScript('editarGarantia', {
     idGarantia: garantia.idGarantia,
-    numeroSolicitud: garantia.numeroSolicitud,
+    numeroSolicitud: garantia.numeroSolicitud || '',
     fecha: garantia.fecha,
+    fechaVencimiento: garantia.fechaVencimiento || '',
     cuentaPropietario: garantia.cuentaPropietario,
     propietario: garantia.propietario,
     cuentaPrestatario: garantia.cuentaPrestatario,
@@ -1010,6 +1362,96 @@ export async function getReporte(
   };
 
   setToMemoryCache('reportes', reportResult, cacheParams);
+  return reportResult;
+}
+
+/**
+ * SERVICIO REPORTE DE VENCIMIENTOS
+ * accion: obtenerReporteVencimientos
+ * Filtros soportados: TODAS, VENCIDAS, VIGENTES, PRÓXIMAS A VENCER, SIN VENCIMIENTO
+ */
+export async function obtenerReporteVencimientos(
+  filtro: 'TODAS' | 'VENCIDAS' | 'VIGENTES' | 'PRÓXIMAS A VENCER' | 'SIN VENCIMIENTO' | string = 'TODAS',
+  forceRefresh: boolean = false
+): Promise<{
+  filtro: string;
+  generado: string;
+  totalGarantias: number;
+  registros: any[];
+  columnas: string[];
+  filas: (string | number)[][];
+}> {
+  const filtroUpper = (filtro || 'TODAS').toUpperCase();
+  const cacheKey = `vencimientos:${filtroUpper}`;
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<any>('reportes', cacheKey);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('obtenerReporteVencimientos', {
+    filtro: filtroUpper,
+    estado: filtroUpper,
+  });
+
+  const rawRegistros = Array.isArray(res?.registros)
+    ? res.registros
+    : Array.isArray(res?.items)
+    ? res.items
+    : Array.isArray(res?.data)
+    ? res.data
+    : Array.isArray(res)
+    ? res
+    : [];
+
+  const registros = rawRegistros.map((item: any) => {
+    const norm = normalizarGarantia(item);
+    return {
+      'N.º Solicitud': norm.numeroSolicitud || '—',
+      'Fecha': norm.fecha || '—',
+      'Fecha de Vencimiento': norm.fechaVencimiento || '—',
+      'Estado Vencimiento': norm.estadoVencimiento || (norm.fechaVencimiento ? 'Vigente' : 'Sin vencimiento'),
+      'Propietario': norm.propietario || '—',
+      'Prestatario': norm.prestatario || '—',
+      'Garantía con': norm.garantiaConNombre || norm.garantiaConTipo || '—',
+      'Lotes/Bienes': norm.lotesResumen || norm.polizasResumen || (norm.tipoGarantia || '—'),
+      ...item,
+    };
+  });
+
+  const columnas = Array.isArray(res?.columnas) && res.columnas.length > 0
+    ? res.columnas
+    : [
+        'N.º Solicitud',
+        'Fecha',
+        'Fecha de Vencimiento',
+        'Estado Vencimiento',
+        'Propietario',
+        'Prestatario',
+        'Garantía con',
+        'Lotes/Bienes',
+      ];
+
+  const filas: (string | number)[][] = Array.isArray(res?.filas) && res.filas.length > 0
+    ? res.filas
+    : registros.map((r: any) =>
+        columnas.map((c: string) => (r[c] !== undefined && r[c] !== null ? r[c] : '—'))
+      );
+
+  const reportResult = {
+    filtro: res?.filtro || filtroUpper,
+    generado: res?.generado || new Date().toISOString(),
+    totalGarantias:
+      typeof res?.total === 'number'
+        ? res.total
+        : typeof res?.totalGarantias === 'number'
+        ? res.totalGarantias
+        : registros.length,
+    registros,
+    columnas,
+    filas,
+  };
+
+  setToMemoryCache('reportes', reportResult, cacheKey);
   return reportResult;
 }
 

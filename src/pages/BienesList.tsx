@@ -24,6 +24,7 @@ import {
   deleteBien,
   setBienBloqueo,
   getClientes,
+  hasInMemoryCache,
 } from '../services/backend';
 import { ClientSearchAutocomplete } from '../components/common/ClientSearchAutocomplete';
 import { ConfirmModal } from '../components/common/ConfirmModal';
@@ -49,6 +50,8 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
   const [filtroTipo, setFiltroTipo] = useState<string>('todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -97,42 +100,62 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
     }
   }, [initialOpenNew]);
 
-  const loadData = async (targetPage = page, targetSearch = debouncedSearch) => {
-    setIsLoading(true);
-    setBackendMessage(null);
-    try {
-      const filters: Record<string, any> = {};
-      if (filtroTipo !== 'todos') filters.tipoBien = filtroTipo;
-      if (filtroEstado !== 'todos') filters.estado = filtroEstado;
+  const loadData = async (
+    targetPage = page,
+    targetSearch = debouncedSearch,
+    forceRefresh = false
+  ) => {
+    const filters: Record<string, any> = {};
+    if (filtroTipo !== 'todos') filters.tipoBien = filtroTipo;
+    if (filtroEstado !== 'todos') filters.estado = filtroEstado;
 
-      const params: QueryParams = {
-        page: targetPage,
-        pageSize,
-        search: targetSearch.trim() || undefined,
-        filters: Object.keys(filters).length > 0 ? filters : undefined,
-      };
-      const res = await getBienes(params);
+    const params: QueryParams = {
+      page: targetPage,
+      pageSize,
+      search: targetSearch.trim() || undefined,
+      filters: Object.keys(filters).length > 0 ? filters : undefined,
+    };
+
+    const isCached = !forceRefresh && hasInMemoryCache('bienes', params);
+
+    if (isCached) {
+      setHasLoadedOnce(true);
+      setIsLoading(false);
+    } else if (bienes.length === 0 && !hasLoadedOnce) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+    setBackendMessage(null);
+
+    try {
+      const res = await getBienes(params, forceRefresh);
       const items = Array.isArray(res?.data) ? res.data : [];
       setBienes(items);
       setTotal(typeof res?.total === 'number' ? res.total : items.length);
       setTotalPages(typeof res?.totalPages === 'number' ? res.totalPages : 1);
       setFromRecord(typeof res?.from === 'number' ? res.from : items.length > 0 ? (targetPage - 1) * pageSize + 1 : 0);
       setToRecord(typeof res?.to === 'number' ? res.to : Math.min(targetPage * pageSize, res?.total || items.length));
+      setHasLoadedOnce(true);
     } catch {
-      setBackendMessage('No se pudo cargar la información.');
-      setBienes([]);
-      setTotal(0);
-      setTotalPages(1);
-      setFromRecord(0);
-      setToRecord(0);
+      if (bienes.length === 0) {
+        setBackendMessage('No se pudo cargar la información.');
+        setTotal(0);
+        setTotalPages(1);
+        setFromRecord(0);
+        setToRecord(0);
+      } else {
+        setBackendMessage('No se pudo actualizar la información.');
+      }
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
-  const loadClientes = async () => {
+  const loadClientes = async (forceRefresh = false) => {
     try {
-      const res = await getClientes({ page: 1, pageSize: 1000 });
+      const res = await getClientes({ page: 1, pageSize: 1000 }, forceRefresh);
       setClientesList(Array.isArray(res?.data) ? res.data : []);
     } catch {
       setClientesList([]);
@@ -140,11 +163,11 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
   };
 
   useEffect(() => {
-    loadData(page, debouncedSearch);
+    loadData(page, debouncedSearch, false);
   }, [page, debouncedSearch, filtroTipo, filtroEstado]);
 
   useEffect(() => {
-    loadClientes();
+    loadClientes(false);
   }, []);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -345,12 +368,13 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => loadData(page, debouncedSearch)}
-            disabled={isLoading}
-            title="Recargar bienes"
-            className="p-1.5 text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded hover:bg-slate-50 transition cursor-pointer"
+            onClick={() => loadData(page, debouncedSearch, true)}
+            disabled={isLoading || isRefreshing}
+            title="Actualizar bienes desde Google Sheets"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition cursor-pointer disabled:opacity-60"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-700' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin text-emerald-700' : ''}`} />
+            <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
           </button>
 
           <button
@@ -371,15 +395,15 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
         </div>
       )}
 
-      {backendMessage && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded flex items-center justify-between text-xs text-red-800">
+      {backendMessage && bienes.length > 0 && (
+        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded flex items-center justify-between text-xs text-amber-800">
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>{backendMessage}</span>
           </div>
           <button
-            onClick={() => loadData(page, debouncedSearch)}
-            className="px-2.5 py-1 text-xs font-semibold text-red-800 hover:text-red-900 bg-red-100 rounded hover:bg-red-200 transition cursor-pointer"
+            onClick={() => loadData(page, debouncedSearch, true)}
+            className="font-medium text-amber-900 underline hover:no-underline cursor-pointer"
           >
             Reintentar
           </button>
@@ -450,6 +474,11 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
         </div>
 
         <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between sm:justify-end">
+          {isRefreshing && (
+            <span className="text-[11px] font-medium text-emerald-800 flex items-center gap-1">
+              <RefreshCw className="w-3 h-3 animate-spin" /> Actualizando datos...
+            </span>
+          )}
           {total > 0 && (
             <span>
               Mostrando <strong className="font-mono text-slate-900">{fromRecord}–{toRecord}</strong> de{' '}
@@ -477,7 +506,32 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal">
-              {Array.isArray(bienes) && bienes.length > 0 ? (
+              {isLoading && !hasLoadedOnce ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <RefreshCw className="w-5 h-5 animate-spin text-emerald-800" />
+                      <span className="font-semibold text-slate-700">Cargando bienes...</span>
+                      <span className="text-[11px] text-slate-400">Consultando registros oficiales en Google Sheets</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : backendMessage && bienes.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-xs text-red-600">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <AlertCircle className="w-6 h-6 text-red-500" />
+                      <span className="font-semibold text-slate-800">No se pudo cargar la información.</span>
+                      <button
+                        onClick={() => loadData(page, debouncedSearch, true)}
+                        className="mt-1 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 rounded font-medium transition cursor-pointer"
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : Array.isArray(bienes) && bienes.length > 0 ? (
                 bienes.map((bien) => {
                   const isBlocked = bien.estado === 'Bloqueado';
                   return (
@@ -613,18 +667,18 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="p-0">
-                    <EmptyState
-                      type={search ? 'no-results' : 'backend-required'}
-                      title={search ? 'Sin coincidencias en bienes' : 'No hay registros de bienes'}
-                      description={
-                        search
+                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-1.5 max-w-sm mx-auto">
+                      <Tractor className="w-8 h-8 text-slate-300 stroke-[1.5]" />
+                      <span className="font-semibold text-slate-700">
+                        {search ? 'Sin coincidencias en bienes' : 'No hay registros para mostrar.'}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {search
                           ? `No se encontró ningún bien con "${search}".`
-                          : 'No se pudo cargar la información o no hay bienes registrados.'
-                      }
-                      onAction={loadData}
-                      actionLabel="Reintentar Consulta"
-                    />
+                          : 'No se encontraron vehículos o maquinarias registradas en Google Sheets.'}
+                      </span>
+                    </div>
                   </td>
                 </tr>
               )}

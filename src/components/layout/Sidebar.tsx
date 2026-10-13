@@ -29,7 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentSection, onSelectSectio
   const navItems: { id: NavSection; label: string; icon: React.ReactNode; badge?: string }[] = [
     {
       id: 'dashboard',
-      label: 'Dashboard',
+      label: 'Menú',
       icon: <LayoutDashboard className="w-4 h-4 shrink-0" />,
     },
     {

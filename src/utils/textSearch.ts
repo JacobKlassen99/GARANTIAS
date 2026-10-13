@@ -58,15 +58,24 @@ export function formatHectareas(num: number | null | undefined): string {
  * Formato de fecha estándar DD/MM/AAAA
  */
 export function formatFecha(fechaStr: string | null | undefined): string {
-  if (!fechaStr) return '—';
-  // Si ya viene en formato AAAA-MM-DD
-  if (fechaStr.includes('-')) {
-    const parts = fechaStr.split('-');
+  if (!fechaStr || fechaStr === '—' || String(fechaStr).trim() === '') return '—';
+  const cleanDate = String(fechaStr).split('T')[0].split(' ')[0].trim();
+  if (cleanDate.includes('-')) {
+    const parts = cleanDate.split('-');
     if (parts.length === 3) {
-      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      return `${parts[2].slice(0, 2)}/${parts[1]}/${parts[0]}`;
     }
   }
-  return fechaStr;
+  if (cleanDate.includes('/')) {
+    const parts = cleanDate.split('/');
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return cleanDate;
+    }
+  }
+  return cleanDate;
 }
 
 /**
@@ -78,4 +87,56 @@ export function getTodayIso(): string {
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * Calcula el estado de vencimiento según la regla de la institución y backend:
+ * - 'Sin vencimiento' si no tiene fecha
+ * - 'Vencida' si la fecha ya pasó (< 0 días)
+ * - 'Próxima a vencer' si vence dentro de los próximos 30 días (0 a 30 días)
+ * - 'Vigente' si faltan más de 30 días
+ */
+export function calcularEstadoVencimiento(fechaVencimientoStr?: string | null): {
+  estado: 'Vigente' | 'Próxima a vencer' | 'Vencida' | 'Sin vencimiento';
+  diasRestantes?: number;
+} {
+  if (!fechaVencimientoStr || !fechaVencimientoStr.trim() || fechaVencimientoStr === '—') {
+    return { estado: 'Sin vencimiento' };
+  }
+
+  let y = 0,
+    m = 0,
+    d = 0;
+  if (fechaVencimientoStr.includes('-')) {
+    const parts = fechaVencimientoStr.split('-').map(Number);
+    y = parts[0];
+    m = parts[1] - 1;
+    d = parts[2];
+  } else if (fechaVencimientoStr.includes('/')) {
+    const parts = fechaVencimientoStr.split('/').map(Number);
+    d = parts[0];
+    m = parts[1] - 1;
+    y = parts[2];
+  } else {
+    return { estado: 'Sin vencimiento' };
+  }
+
+  if (isNaN(y) || isNaN(m) || isNaN(d) || y <= 0 || d <= 0) {
+    return { estado: 'Sin vencimiento' };
+  }
+
+  const targetDate = new Date(y, m, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const diffMs = targetDate.getTime() - today.getTime();
+  const diasRestantes = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diasRestantes < 0) {
+    return { estado: 'Vencida', diasRestantes };
+  } else if (diasRestantes <= 30) {
+    return { estado: 'Próxima a vencer', diasRestantes };
+  } else {
+    return { estado: 'Vigente', diasRestantes };
+  }
 }

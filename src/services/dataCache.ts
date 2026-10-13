@@ -14,6 +14,29 @@
 // Almacén en memoria volátil (desaparece al cerrar la pestaña o recargar)
 const memoryCache = new Map<string, any>();
 
+// Promesas en vuelo para deduplicar peticiones idénticas concurrentes
+const inFlightRequests = new Map<string, Promise<any>>();
+
+/**
+ * Deduplica peticiones idénticas en curso (evita duplicados por useEffect / React StrictMode)
+ */
+export async function fetchWithDeduplication<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  if (inFlightRequests.has(key)) {
+    return inFlightRequests.get(key) as Promise<T>;
+  }
+
+  const promise = (async () => {
+    try {
+      return await fetcher();
+    } finally {
+      inFlightRequests.delete(key);
+    }
+  })();
+
+  inFlightRequests.set(key, promise);
+  return promise;
+}
+
 /**
  * Genera una clave única para almacenar resultados de consultas
  */
@@ -79,4 +102,31 @@ export function invalidateMemoryCache(namespaces: string | string[]): void {
  */
 export function clearAllMemoryCache(): void {
   memoryCache.clear();
+}
+
+/**
+ * Busca si ya existen elementos en caché para un módulo determinado
+ * (reutiliza lotes, bienes o clientes ya cargados en cualquier vista previa)
+ */
+export function findAnyCachedData<T>(namespace: string): T[] | null {
+  // Primero revisar clave directa 'all'
+  const allKey = `${namespace}:all`;
+  if (memoryCache.has(allKey)) {
+    const val = memoryCache.get(allKey);
+    if (Array.isArray(val) && val.length > 0) return val as T[];
+  }
+
+  // Buscar en cualquier clave del namespace que contenga registros
+  for (const [key, value] of memoryCache.entries()) {
+    if (key === namespace || key.startsWith(`${namespace}:`)) {
+      if (Array.isArray(value) && value.length > 0) {
+        return value as T[];
+      }
+      if (value && typeof value === 'object' && Array.isArray((value as any).data) && (value as any).data.length > 0) {
+        return (value as any).data as T[];
+      }
+    }
+  }
+
+  return null;
 }

@@ -14,13 +14,14 @@ import {
   AlertCircle,
   ShieldCheck,
 } from 'lucide-react';
-import { Lote, Cliente, QueryParams, EstadoRegistro } from '../types';
+import { Lote, Cliente, QueryParams, EstadoRegistro, PaginatedResponse } from '../types';
 import {
   getLotes,
   saveLote,
   deleteLote,
   setLoteBloqueo,
   getClientes,
+  getFromMemoryCache,
 } from '../services/backend';
 import { ClientSearchAutocomplete } from '../components/common/ClientSearchAutocomplete';
 import { ConfirmModal } from '../components/common/ConfirmModal';
@@ -96,6 +97,25 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
     targetSearch = debouncedSearch,
     forceRefresh = false
   ) => {
+    const params: QueryParams = {
+      page: targetPage,
+      pageSize,
+      search: targetSearch.trim() || undefined,
+      filters: filtroEstado !== 'todos' ? { estado: filtroEstado } : undefined,
+    };
+
+    if (!forceRefresh) {
+      const cached = getFromMemoryCache<PaginatedResponse<Lote>>('lotes', params);
+      if (cached && !hasLoadedOnce) {
+        setLotes(cached.data || []);
+        setTotal(typeof cached.total === 'number' ? cached.total : (cached.data || []).length);
+        setTotalPages(typeof cached.totalPages === 'number' ? cached.totalPages : 1);
+        setFromRecord(cached.from || 1);
+        setToRecord(cached.to || (cached.data || []).length);
+        setHasLoadedOnce(true);
+      }
+    }
+
     if (lotes.length === 0 && !hasLoadedOnce) {
       setIsLoading(true);
     } else {
@@ -104,12 +124,6 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
     setBackendMessage(null);
 
     try {
-      const params: QueryParams = {
-        page: targetPage,
-        pageSize,
-        search: targetSearch.trim() || undefined,
-        filters: filtroEstado !== 'todos' ? { estado: filtroEstado } : undefined,
-      };
       const res = await getLotes(params, forceRefresh);
       const items = Array.isArray(res?.data) ? res.data : [];
       setLotes(items);

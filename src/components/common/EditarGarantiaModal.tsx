@@ -49,6 +49,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
   // Datos principales
   const [numeroSolicitud, setNumeroSolicitud] = useState('');
   const [fecha, setFecha] = useState('');
+  const [fechaVencimiento, setFechaVencimiento] = useState('');
   const [modalidad, setModalidad] = useState<'Simple' | 'Múltiple'>('Simple');
   const [selectedPropietario, setSelectedPropietario] = useState<Cliente | null>(null);
   const [selectedPrestatario, setSelectedPrestatario] = useState<Cliente | null>(null);
@@ -98,8 +99,11 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         setAvailableBienes(Array.isArray(bRes?.data) ? bRes.data : []);
 
         if (garantiaFull) {
-          setNumeroSolicitud(garantiaFull.numeroSolicitud);
+          setNumeroSolicitud(garantiaFull.numeroSolicitud || '');
           setFecha(garantiaFull.fecha ? garantiaFull.fecha.split('T')[0] : '');
+          setFechaVencimiento(
+            garantiaFull.fechaVencimiento ? garantiaFull.fechaVencimiento.split('T')[0] : ''
+          );
           setModalidad(garantiaFull.modalidad === 'Múltiple' ? 'Múltiple' : 'Simple');
           setSelectedPropietario({
             cuenta: garantiaFull.cuentaPropietario,
@@ -158,13 +162,18 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
       alert('Las hectáreas a poner en garantía deben ser mayores a 0.');
       return;
     }
+    if (tempLoteGarantiaCon === 'Cliente' && !tempLoteCliente) {
+      alert('Debe seleccionar el cliente registrado para este lote.');
+      return;
+    }
+    const gTipo = tempLoteGarantiaCon;
     const gNombre =
-      tempLoteGarantiaCon === 'Cliente' && tempLoteCliente
+      gTipo === 'Cliente' && tempLoteCliente
         ? `${tempLoteCliente.cuenta} — ${tempLoteCliente.nombre}`
-        : tempLoteGarantiaCon;
+        : gTipo;
 
     const gCuenta =
-      tempLoteGarantiaCon === 'Cliente' && tempLoteCliente ? tempLoteCliente.cuenta : undefined;
+      gTipo === 'Cliente' && tempLoteCliente ? tempLoteCliente.cuenta : undefined;
 
     setLotes((prev) => [
       ...prev.filter((l) => l.idLote !== tempLoteTarget.idLote),
@@ -177,7 +186,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         cuentaPropietario: tempLoteTarget.cuentaPropietario,
         ubicacion: tempLoteTarget.ubicacion,
         encargado: tempLoteTarget.encargado,
-        garantiaConTipo: tempLoteGarantiaCon,
+        garantiaConTipo: gTipo,
         garantiaConCuenta: gCuenta,
         garantiaConNombre: gNombre,
       },
@@ -194,13 +203,18 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
       alert('El valor en garantía debe ser un número válido.');
       return;
     }
+    if (tempBienGarantiaCon === 'Cliente' && !tempBienCliente) {
+      alert('Debe seleccionar el cliente registrado para este bien.');
+      return;
+    }
+    const gTipo = tempBienGarantiaCon;
     const gNombre =
-      tempBienGarantiaCon === 'Cliente' && tempBienCliente
+      gTipo === 'Cliente' && tempBienCliente
         ? `${tempBienCliente.cuenta} — ${tempBienCliente.nombre}`
-        : tempBienGarantiaCon;
+        : gTipo;
 
     const gCuenta =
-      tempBienGarantiaCon === 'Cliente' && tempBienCliente ? tempBienCliente.cuenta : undefined;
+      gTipo === 'Cliente' && tempBienCliente ? tempBienCliente.cuenta : undefined;
 
     setBienes((prev) => [
       ...prev.filter((b) => b.idBien !== tempBienTarget.idBien),
@@ -217,7 +231,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         cuentaPropietario: tempBienTarget.cuentaPropietario,
         ubicacion: tempBienTarget.ubicacion,
         valorGarantiaUSD: tempBienValUSD,
-        garantiaConTipo: tempBienGarantiaCon,
+        garantiaConTipo: gTipo,
         garantiaConCuenta: gCuenta,
         garantiaConNombre: gNombre,
       },
@@ -267,15 +281,16 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
     try {
       const payload: Partial<Garantia> = {
         idGarantia,
-        numeroSolicitud,
+        numeroSolicitud: numeroSolicitud.trim(),
         fecha,
+        fechaVencimiento: fechaVencimiento || '',
         cuentaPropietario: selectedPropietario.cuenta,
         propietario: selectedPropietario.nombre,
         cuentaPrestatario: selectedPrestatario.cuenta,
         prestatario: selectedPrestatario.nombre,
-        garantiaConTipo,
-        garantiaConCuenta: gCuenta,
-        garantiaConNombre: gNombre,
+        garantiaConTipo: modalidad === 'Múltiple' ? 'Cliente' : garantiaConTipo,
+        garantiaConCuenta: modalidad === 'Múltiple' ? undefined : gCuenta,
+        garantiaConNombre: modalidad === 'Múltiple' ? 'Clientes Particulares Múltiples' : gNombre,
         tipoGarantia: tipoGarantiaCalculado,
         modalidad,
         observacion: observacion.trim(),
@@ -340,16 +355,17 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                 <span>Datos Generales de la Solicitud</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    N.º Solicitud (No editable)
+                    N.º de Solicitud
                   </label>
                   <input
                     type="text"
                     value={numeroSolicitud}
-                    disabled
-                    className="w-full px-2.5 py-1.5 bg-slate-200 border border-slate-300 rounded font-mono font-bold text-slate-700 cursor-not-allowed text-xs"
+                    onChange={(e) => setNumeroSolicitud(e.target.value)}
+                    placeholder="Ej. 7097"
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded font-mono font-bold text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-700"
                   />
                 </div>
 
@@ -362,6 +378,29 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                     value={fecha}
                     onChange={(e) => setFecha(e.target.value)}
                     required
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-700 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-bold text-slate-700">
+                      Fecha de Vencimiento
+                    </label>
+                    {fechaVencimiento && (
+                      <button
+                        type="button"
+                        onClick={() => setFechaVencimiento('')}
+                        className="text-[10px] text-red-600 hover:text-red-800 underline cursor-pointer"
+                      >
+                        Borrar
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="date"
+                    value={fechaVencimiento}
+                    onChange={(e) => setFechaVencimiento(e.target.value)}
                     className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-700 text-xs"
                   />
                 </div>
@@ -416,10 +455,12 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                 />
               </div>
 
-              {/* Garantía con (cuando es Simple o general) */}
+              {/* Garantía con (General / Predeterminado) */}
               <div className="pt-2">
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Garantía Constituida Con {modalidad === 'Múltiple' && '(General)'}
+                  {modalidad === 'Múltiple'
+                    ? 'Seleccione el acreedor por defecto (en modalidad múltiple, cada elemento puede personalizarse):'
+                    : 'Garantía Constituida Con'}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => (
@@ -427,13 +468,13 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                       key={tipo}
                       type="button"
                       onClick={() => setGarantiaConTipo(tipo)}
-                      className={`py-1.5 px-2 text-xs font-semibold rounded border transition text-center ${
+                      className={`py-1.5 px-2 text-xs font-semibold rounded border transition text-center cursor-pointer ${
                         garantiaConTipo === tipo
                           ? 'bg-emerald-800 text-white border-emerald-900 shadow-2xs'
                           : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
                       }`}
                     >
-                      {tipo}
+                      {tipo === 'Cliente' ? 'Cliente registrado' : tipo}
                     </button>
                   ))}
                 </div>
@@ -526,8 +567,59 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                           />{' '}
                           ha
                         </td>
-                        <td className="p-1.5 border-r border-slate-200">
-                          {lote.garantiaConNombre || garantiaConTipo}
+                        <td className="p-1.5 border-r border-slate-200 space-y-1">
+                          <select
+                            value={lote.garantiaConTipo || 'Farmer Rechnung'}
+                            onChange={(e) => {
+                              const tipo = e.target.value as TipoGarantiaCon;
+                              setLotes((prev) =>
+                                prev.map((item) =>
+                                  item.idLote === lote.idLote
+                                    ? {
+                                        ...item,
+                                        garantiaConTipo: tipo,
+                                        garantiaConCuenta: tipo === 'Cliente' ? item.garantiaConCuenta : undefined,
+                                        garantiaConNombre: tipo === 'Cliente' ? item.garantiaConNombre : tipo,
+                                      }
+                                    : item
+                                )
+                              );
+                            }}
+                            className="w-full px-1.5 py-1 text-xs border border-slate-300 rounded bg-white font-semibold"
+                          >
+                            <option value="Farmer Rechnung">Farmer Rechnung</option>
+                            <option value="Campo Grande">Campo Grande</option>
+                            <option value="Cliente">Cliente registrado</option>
+                          </select>
+
+                          {lote.garantiaConTipo === 'Cliente' && (
+                            <select
+                              value={lote.garantiaConCuenta || ''}
+                              onChange={(e) => {
+                                const cuenta = e.target.value;
+                                const cli = clientesList.find((c) => String(c.cuenta) === String(cuenta));
+                                setLotes((prev) =>
+                                  prev.map((item) =>
+                                    item.idLote === lote.idLote
+                                      ? {
+                                          ...item,
+                                          garantiaConCuenta: cuenta,
+                                          garantiaConNombre: cli ? `${cli.cuenta} — ${cli.nombre}` : cuenta,
+                                        }
+                                      : item
+                                  )
+                                );
+                              }}
+                              className="w-full px-1.5 py-1 text-[11px] border border-slate-300 rounded bg-white"
+                            >
+                              <option value="">-- Seleccionar cliente --</option>
+                              {clientesList.map((c) => (
+                                <option key={c.cuenta} value={c.cuenta}>
+                                  {c.cuenta} — {c.nombre}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </td>
                         <td className="p-1.5 text-center">
                           <button
@@ -567,8 +659,59 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                             className="w-28 px-1.5 py-0.5 text-right font-mono border border-slate-300 rounded text-xs"
                           />
                         </td>
-                        <td className="p-1.5 border-r border-slate-200">
-                          {bien.garantiaConNombre || garantiaConTipo}
+                        <td className="p-1.5 border-r border-slate-200 space-y-1">
+                          <select
+                            value={bien.garantiaConTipo || 'Farmer Rechnung'}
+                            onChange={(e) => {
+                              const tipo = e.target.value as TipoGarantiaCon;
+                              setBienes((prev) =>
+                                prev.map((item) =>
+                                  item.idBien === bien.idBien
+                                    ? {
+                                        ...item,
+                                        garantiaConTipo: tipo,
+                                        garantiaConCuenta: tipo === 'Cliente' ? item.garantiaConCuenta : undefined,
+                                        garantiaConNombre: tipo === 'Cliente' ? item.garantiaConNombre : tipo,
+                                      }
+                                    : item
+                                )
+                              );
+                            }}
+                            className="w-full px-1.5 py-1 text-xs border border-slate-300 rounded bg-white font-semibold"
+                          >
+                            <option value="Farmer Rechnung">Farmer Rechnung</option>
+                            <option value="Campo Grande">Campo Grande</option>
+                            <option value="Cliente">Cliente registrado</option>
+                          </select>
+
+                          {bien.garantiaConTipo === 'Cliente' && (
+                            <select
+                              value={bien.garantiaConCuenta || ''}
+                              onChange={(e) => {
+                                const cuenta = e.target.value;
+                                const cli = clientesList.find((c) => String(c.cuenta) === String(cuenta));
+                                setBienes((prev) =>
+                                  prev.map((item) =>
+                                    item.idBien === bien.idBien
+                                      ? {
+                                          ...item,
+                                          garantiaConCuenta: cuenta,
+                                          garantiaConNombre: cli ? `${cli.cuenta} — ${cli.nombre}` : cuenta,
+                                        }
+                                      : item
+                                  )
+                                );
+                              }}
+                              className="w-full px-1.5 py-1 text-[11px] border border-slate-300 rounded bg-white"
+                            >
+                              <option value="">-- Seleccionar cliente --</option>
+                              {clientesList.map((c) => (
+                                <option key={c.cuenta} value={c.cuenta}>
+                                  {c.cuenta} — {c.nombre}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </td>
                         <td className="p-1.5 text-center">
                           <button
@@ -720,31 +863,44 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                       />
                     </div>
 
-                    {modalidad === 'Múltiple' && (
-                      <div className="pt-2 border-t border-slate-200">
-                        <label className="block font-bold text-slate-700 mb-1">
-                          Garantía con para este lote:
-                        </label>
-                        <select
-                          value={tempLoteGarantiaCon}
-                          onChange={(e) => setTempLoteGarantiaCon(e.target.value as TipoGarantiaCon)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs mb-2"
-                        >
-                          <option value="Farmer Rechnung">Farmer Rechnung</option>
-                          <option value="Campo Grande">Campo Grande</option>
-                          <option value="Cliente">Cliente</option>
-                        </select>
-                        {tempLoteGarantiaCon === 'Cliente' && (
+                    <div className="pt-2 border-t border-slate-200 space-y-2">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Garantía Constituida Con (Acreedor de este lote):
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => (
+                          <button
+                            key={tipo}
+                            type="button"
+                            onClick={() => {
+                              setTempLoteGarantiaCon(tipo);
+                              if (tipo !== 'Cliente') setTempLoteCliente(null);
+                            }}
+                            className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                              tempLoteGarantiaCon === tipo
+                                ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
+                                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                            }`}
+                          >
+                            {tipo === 'Cliente' ? 'Cliente registrado' : tipo}
+                          </button>
+                        ))}
+                      </div>
+
+                      {tempLoteGarantiaCon === 'Cliente' && (
+                        <div className="pt-1">
                           <ClientSearchAutocomplete
-                            label="Cliente receptor"
+                            label="Cliente Receptor de este Lote"
+                            placeholder="Buscar cliente registrado por cuenta o nombre..."
                             clientesList={clientesList}
                             selectedCuenta={tempLoteCliente?.cuenta}
                             onSelect={setTempLoteCliente}
                             required
+                            helperText="Seleccione el cliente que recibe la garantía sobre este lote."
                           />
-                        )}
-                      </div>
-                    )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -835,31 +991,44 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                       />
                     </div>
 
-                    {modalidad === 'Múltiple' && (
-                      <div className="pt-2 border-t border-slate-200">
-                        <label className="block font-bold text-slate-700 mb-1">
-                          Garantía con para este bien:
-                        </label>
-                        <select
-                          value={tempBienGarantiaCon}
-                          onChange={(e) => setTempBienGarantiaCon(e.target.value as TipoGarantiaCon)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs mb-2"
-                        >
-                          <option value="Farmer Rechnung">Farmer Rechnung</option>
-                          <option value="Campo Grande">Campo Grande</option>
-                          <option value="Cliente">Cliente</option>
-                        </select>
-                        {tempBienGarantiaCon === 'Cliente' && (
+                    <div className="pt-2 border-t border-slate-200 space-y-2">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Garantía Constituida Con (Acreedor de este bien):
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => (
+                          <button
+                            key={tipo}
+                            type="button"
+                            onClick={() => {
+                              setTempBienGarantiaCon(tipo);
+                              if (tipo !== 'Cliente') setTempBienCliente(null);
+                            }}
+                            className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
+                              tempBienGarantiaCon === tipo
+                                ? 'bg-blue-800 text-white border-blue-900 shadow-xs'
+                                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                            }`}
+                          >
+                            {tipo === 'Cliente' ? 'Cliente registrado' : tipo}
+                          </button>
+                        ))}
+                      </div>
+
+                      {tempBienGarantiaCon === 'Cliente' && (
+                        <div className="pt-1">
                           <ClientSearchAutocomplete
-                            label="Cliente receptor"
+                            label="Cliente Receptor de este Bien"
+                            placeholder="Buscar cliente registrado por cuenta o nombre..."
                             clientesList={clientesList}
                             selectedCuenta={tempBienCliente?.cuenta}
                             onSelect={setTempBienCliente}
                             required
+                            helperText="Seleccione el cliente que recibe la garantía sobre este bien."
                           />
-                        )}
-                      </div>
-                    )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 

@@ -24,7 +24,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentSection, onSelectSe
   const mainItems: { id: NavSection; label: string; icon: React.ReactNode }[] = [
     {
       id: 'dashboard',
-      label: 'Dashboard',
+      label: 'Menú',
       icon: <LayoutDashboard className="w-5 h-5" />,
     },
     {

@@ -13,7 +13,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { DashboardStats } from '../types';
-import { getDashboardStats } from '../services/backend';
+import { getDashboardStats, hasInMemoryCache } from '../services/backend';
 import { NavSection } from '../components/layout/Sidebar';
 import { formatHectareas } from '../utils/textSearch';
 
@@ -40,14 +40,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
     lotesBloqueados: null,
     bienesBloqueados: null,
   });
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!hasInMemoryCache('dashboard'));
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasError, setHasError] = useState(false);
 
-  const loadStats = async () => {
-    setIsLoading(true);
+  const loadStats = async (forceRefresh: boolean = false) => {
+    const isCached = !forceRefresh && hasInMemoryCache('dashboard');
+    if (isCached) {
+      setIsLoading(false);
+    } else if (stats.garantiasActivas === null) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
     setHasError(false);
     try {
-      const data = await getDashboardStats();
+      const data = await getDashboardStats(forceRefresh);
       if (data && typeof data === 'object') {
         setStats({
           garantiasActivas: typeof data.garantiasActivas === 'number' ? data.garantiasActivas : null,
@@ -60,37 +68,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
           lotesBloqueados: typeof data.lotesBloqueados === 'number' ? data.lotesBloqueados : null,
           bienesBloqueados: typeof data.bienesBloqueados === 'number' ? data.bienesBloqueados : null,
         });
-      } else {
-        setStats({
-          garantiasActivas: null,
-          hectareasEnGarantia: null,
-          hectareasDisponibles: null,
-          bienesEnGarantia: null,
-          valorBienesEnGarantiaUSD: null,
-          garantiasExternas: null,
-          lotesBloqueados: null,
-          bienesBloqueados: null,
-        });
       }
     } catch {
       setHasError(true);
-      setStats({
-        garantiasActivas: null,
-        hectareasEnGarantia: null,
-        hectareasDisponibles: null,
-        bienesEnGarantia: null,
-        valorBienesEnGarantiaUSD: null,
-        garantiasExternas: null,
-        lotesBloqueados: null,
-        bienesBloqueados: null,
-      });
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
-    loadStats();
+    loadStats(false);
   }, []);
 
   const renderValue = (val: number | null | undefined, mode: 'count' | 'ha' | 'usd' = 'count') => {
@@ -186,12 +174,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={loadStats}
-            disabled={isLoading}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition cursor-pointer"
+            onClick={() => loadStats(true)}
+            disabled={isLoading || isRefreshing}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition cursor-pointer disabled:opacity-60"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-700' : ''}`} />
-            <span>Actualizar Datos</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin text-emerald-700' : ''}`} />
+            <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
           </button>
         </div>
       </div>
@@ -203,7 +191,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span>No se pudo cargar la información.</span>
           </div>
           <button
-            onClick={loadStats}
+            onClick={() => loadStats(true)}
             className="px-2.5 py-1 text-xs font-semibold text-red-800 hover:text-red-900 bg-red-100 rounded hover:bg-red-200 transition cursor-pointer"
           >
             Reintentar

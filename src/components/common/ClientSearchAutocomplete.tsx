@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, UserCheck, X, AlertCircle, RefreshCw } from 'lucide-react';
 import { Cliente } from '../../types';
-import { buscarClientes, obtenerClientePorCuenta } from '../../services/backend';
+import {
+  buscarClientes,
+  obtenerClientePorCuenta,
+  findAnyCachedData,
+  getFromMemoryCache,
+} from '../../services/backend';
 import { formatClienteLabel } from '../../utils/textSearch';
 
 interface ClientSearchAutocompleteProps {
@@ -28,19 +33,24 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
   const [inputText, setInputText] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const [accountNotFound, setAccountNotFound] = useState(false);
   const [suggestions, setSuggestions] = useState<Cliente[]>([]);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<any>(null);
 
+  // Clientes disponibles en caché para autocompletado inmediato
+  const effectiveClients: Cliente[] =
+    Array.isArray(clientesList) && clientesList.length > 0
+      ? clientesList
+      : findAnyCachedData<Cliente>('clientes') || [];
+
   // Sincronizar texto si viene una cuenta seleccionada
   useEffect(() => {
     if (selectedCuenta !== undefined && selectedCuenta !== null && selectedCuenta !== '') {
       const clean = String(selectedCuenta).trim();
-      // Buscar primero en el caché local si existe
-      const localFound = Array.isArray(clientesList)
-        ? clientesList.find((c) => String(c.cuenta).trim() === clean)
-        : null;
+      // Buscar primero en el caché local/en memoria si existe
+      const localFound = effectiveClients.find((c) => String(c.cuenta).trim() === clean);
 
       if (localFound) {
         setInputText(formatClienteLabel(localFound.cuenta, localFound.nombre));
@@ -65,7 +75,7 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
       setInputText('');
       setAccountNotFound(false);
     }
-  }, [selectedCuenta]);
+  }, [selectedCuenta, effectiveClients.length]);
 
   // Cerrar lista al hacer click fuera
   useEffect(() => {
@@ -79,26 +89,37 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [inputText]);
 
-  // Búsqueda remota con debounce (350ms)
-  useEffect(() => {
-    if (disabled) return;
-    const clean = inputText.trim();
-
-    if (!clean) {
-      setSuggestions([]);
-      setAccountNotFound(false);
+  // Ejecutar búsqueda (con caché inmediata o remota con debounce)
+  const executeSearch = (clean: string) => {
+    // 1. Verificar si ya existe en la caché en memoria de búsquedas
+    const searchKey = `search:${clean.toLowerCase()}`;
+    const cachedResults = getFromMemoryCache<Cliente[]>('clientes', searchKey);
+    if (cachedResults) {
+      setSuggestions(cachedResults);
+      setIsSearching(false);
+      setSearchError(false);
       return;
     }
 
-    // Si coincide con "112 — Juan Perez", no reiniciar búsqueda
-    if (clean.includes('—')) {
-      return;
+    // 2. Si no está en caché remota, buscar primero en los clientes ya cargados en memoria
+    if (effectiveClients.length > 0) {
+      const lower = clean.toLowerCase();
+      const localMatches = effectiveClients.filter(
+        (c) =>
+          String(c.cuenta).toLowerCase().includes(lower) ||
+          c.nombre.toLowerCase().includes(lower) ||
+          (c.ci && c.ci.toLowerCase().includes(lower))
+      );
+      if (localMatches.length > 0) {
+        setSuggestions(localMatches);
+      }
     }
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(async () => {
       setIsSearching(true);
+      setSearchError(false);
       try {
         const results = await buscarClientes(clean);
         setSuggestions(results);
@@ -115,11 +136,32 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
           setAccountNotFound(false);
         }
       } catch {
-        setSuggestions([]);
+        setSearchError(true);
       } finally {
         setIsSearching(false);
       }
     }, 350);
+  };
+
+  // Búsqueda al escribir
+  useEffect(() => {
+    if (disabled) return;
+    const clean = inputText.trim();
+
+    if (!clean) {
+      setSuggestions([]);
+      setAccountNotFound(false);
+      setIsSearching(false);
+      setSearchError(false);
+      return;
+    }
+
+    // Si coincide con formato seleccionado "112 — Juan Perez", no reiniciar búsqueda
+    if (clean.includes('—')) {
+      return;
+    }
+
+    executeSearch(clean);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -136,6 +178,14 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
 
     // Si es solo número (ej: "112")
     if (/^\d+$/.test(clean)) {
+      // Revisar primero en memoria
+      const local = effectiveClients.find((c) => String(c.cuenta).trim() === clean);
+      if (local) {
+        setInputText(formatClienteLabel(local.cuenta, local.nombre));
+        setAccountNotFound(false);
+        onSelect(local);
+        return;
+      }
       try {
         const match = await obtenerClientePorCuenta(clean);
         if (match) {
@@ -157,6 +207,12 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
     const matchParts = clean.match(/^(\d+)\s*—/);
     if (matchParts && matchParts[1]) {
       const cuentaNum = matchParts[1];
+      const local = effectiveClients.find((c) => String(c.cuenta).trim() === cuentaNum);
+      if (local) {
+        setAccountNotFound(false);
+        onSelect(local);
+        return;
+      }
       const match = await obtenerClientePorCuenta(cuentaNum);
       if (match) {
         setAccountNotFound(false);
@@ -194,8 +250,17 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
     setIsOpen(false);
     setSuggestions([]);
     setAccountNotFound(false);
+    setSearchError(false);
     onSelect(null);
   };
+
+  // Clientes a mostrar en dropdown: si inputText está vacío y se hace click, mostrar primeros de caché
+  const displaySuggestions =
+    inputText.trim() && !inputText.includes('—')
+      ? suggestions
+      : !inputText.trim()
+      ? effectiveClients.slice(0, 15)
+      : [];
 
   return (
     <div className="relative w-full" ref={wrapperRef}>
@@ -252,11 +317,27 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
       )}
 
       {/* Menú desplegable de sugerencias inteligentes */}
-      {isOpen && !disabled && inputText.trim() && !inputText.includes('—') && (
+      {isOpen && !disabled && !inputText.includes('—') && (
         <div className="absolute z-40 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-300 rounded shadow-lg text-xs">
-          {suggestions.length > 0 ? (
+          {isSearching ? (
+            <div className="px-3 py-3 text-center text-slate-600 flex items-center justify-center gap-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-800" />
+              <span className="text-[11px] font-medium">Buscando clientes...</span>
+            </div>
+          ) : searchError ? (
+            <div className="px-3 py-3 text-center text-red-600 flex flex-col items-center gap-1">
+              <span className="text-[11px]">No se pudo cargar la información.</span>
+              <button
+                type="button"
+                onClick={() => executeSearch(inputText.trim())}
+                className="text-[10px] text-red-800 font-semibold underline hover:no-underline cursor-pointer"
+              >
+                Reintentar
+              </button>
+            </div>
+          ) : displaySuggestions.length > 0 ? (
             <div className="py-1 divide-y divide-slate-100">
-              {suggestions.map((cliente) => (
+              {displaySuggestions.map((cliente) => (
                 <button
                   key={`${cliente.cuenta}-${cliente.nombre}`}
                   type="button"
@@ -279,15 +360,11 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
                 </button>
               ))}
             </div>
-          ) : (
+          ) : inputText.trim() ? (
             <div className="px-3 py-3 text-center text-slate-500">
-              {isSearching ? (
-                <span className="text-[11px]">Buscando clientes...</span>
-              ) : (
-                <span className="text-[11px]">No se encontraron coincidencias para "{inputText}"</span>
-              )}
+              <span className="text-[11px]">No se encontraron coincidencias para "{inputText}"</span>
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>
