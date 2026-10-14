@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   FilePlus,
   FileCheck2,
+  Archive,
   Users,
   MapPin,
   Tractor,
@@ -14,6 +15,7 @@ export type NavSection =
   | 'dashboard'
   | 'nueva-garantia'
   | 'garantias'
+  | 'garantias-liberadas'
   | 'clientes'
   | 'lotes'
   | 'bienes'
@@ -39,8 +41,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentSection, onSelectSectio
     },
     {
       id: 'garantias',
-      label: 'Garantías',
+      label: 'Garantías Activas',
       icon: <FileCheck2 className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'garantias-liberadas',
+      label: 'Garantías Liberadas',
+      icon: <Archive className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'clientes',

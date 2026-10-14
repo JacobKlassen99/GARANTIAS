@@ -16,7 +16,12 @@ import {
   Lote,
   Bien,
   Garantia,
+  GarantiaLiberada,
   DashboardStats,
+  UbicacionEstadistica,
+  GarantiaProximaVencer,
+  ClienteEstadistica,
+  EstadisticasPanel,
   PaginatedResponse,
   QueryParams,
   ConfiguracionSistema,
@@ -30,7 +35,7 @@ import {
   RelacionBienGarantia,
   EstadoRegistro,
 } from '../types';
-import { calcularEstadoVencimiento, parseDecimal } from '../utils/textSearch';
+import { calcularEstadoVencimiento, parseDecimal, matchesAnyField } from '../utils/textSearch';
 import {
   getFromMemoryCache,
   setToMemoryCache,
@@ -110,6 +115,7 @@ export async function preloadAllData(forceRefresh: boolean = false): Promise<voi
       listarLotes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
       listarBienes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
       listarGarantias({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
+      obtenerEstadisticasPanel(forceRefresh).catch(() => null),
     ]);
 
     if (initData || clientesRes || lotesRes || bienesRes || garantiasRes) {
@@ -401,6 +407,87 @@ export async function getDashboardStats(forceRefresh: boolean = false): Promise<
 }
 
 /**
+ * SERVICIOS DE ESTADÍSTICAS DEL PANEL (NUEVO BACKEND)
+ * accion: obtenerEstadisticasPanel
+ */
+export async function obtenerEstadisticasPanel(forceRefresh: boolean = false): Promise<EstadisticasPanel> {
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<EstadisticasPanel>('estadisticas_panel');
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('obtenerEstadisticasPanel', {});
+  const data = res?.resultado || res?.data || res || {};
+
+  const porUbicacion: UbicacionEstadistica[] = Array.isArray(data?.porUbicacion)
+    ? data.porUbicacion.map((item: any) => ({
+        ubicacion: String(item?.ubicacion || item?.Ubicación || item?.Ubicacion || 'Sin Ubicación'),
+        cantidadLotes: typeof item?.cantidadLotes === 'number' ? item.cantidadLotes : (Number(item?.['Cantidad Lotes']) || 0),
+        hectareasTotales: typeof item?.hectareasTotales === 'number' ? item.hectareasTotales : parseDecimal(item?.['Hectáreas Totales'] ?? item?.hectareasTotales),
+        hectareasEnGarantia: typeof item?.hectareasEnGarantia === 'number' ? item.hectareasEnGarantia : parseDecimal(item?.['Hectáreas en Garantía'] ?? item?.hectareasEnGarantia),
+        hectareasDisponibles: typeof item?.hectareasDisponibles === 'number' ? item.hectareasDisponibles : parseDecimal(item?.['Hectáreas Disponibles'] ?? item?.hectareasDisponibles),
+        hectareasBloqueadas: typeof item?.hectareasBloqueadas === 'number'
+          ? item.hectareasBloqueadas
+          : typeof item?.hectareasNoDisponibles === 'number'
+          ? item.hectareasNoDisponibles
+          : parseDecimal(item?.['Hectáreas Bloqueadas'] ?? item?.['Hectáreas No Disponibles'] ?? item?.hectareasBloqueadas ?? item?.hectareasNoDisponibles ?? 0),
+      }))
+    : [];
+
+  const proximasAVencer: GarantiaProximaVencer[] = Array.isArray(data?.proximasAVencer)
+    ? data.proximasAVencer.map((item: any) => {
+        const idGarantia = String(item?.idGarantia || item?.['ID Garantía'] || '');
+        const numeroSolicitud = item?.numeroSolicitud ?? item?.['N.º Solicitud'] ?? '';
+        const propietario = String(item?.propietario || item?.['Propietario'] || '');
+        const cuentaPropietario = item?.cuentaPropietario ?? item?.['Cuenta Propietario'] ?? '';
+        const prestatario = String(item?.prestatario || item?.['Prestatario'] || '');
+        const cuentaPrestatario = item?.cuentaPrestatario ?? item?.['Cuenta Prestatario'] ?? '';
+        const fechaVencimiento = String(item?.fechaVencimiento || item?.['Fecha de Vencimiento'] || '');
+
+        const calc = calcularEstadoVencimiento(fechaVencimiento);
+        const diasRestantes = typeof item?.diasRestantes === 'number'
+          ? item.diasRestantes
+          : calc.diasRestantes;
+        const estadoVencimiento = (item?.estadoVencimiento || calc.estado) as GarantiaProximaVencer['estadoVencimiento'];
+
+        return {
+          idGarantia,
+          numeroSolicitud,
+          propietario,
+          cuentaPropietario,
+          prestatario,
+          cuentaPrestatario,
+          fechaVencimiento,
+          diasRestantes,
+          estadoVencimiento,
+        };
+      })
+    : [];
+
+  const principalesClientes: ClienteEstadistica[] = Array.isArray(data?.principalesClientes)
+    ? data.principalesClientes.map((item: any) => ({
+        cuenta: item?.cuenta ?? item?.Cuenta ?? '',
+        nombre: String(item?.nombre || item?.Nombre || ''),
+        cantidadGarantias: typeof item?.cantidadGarantias === 'number' ? item.cantidadGarantias : (Number(item?.['Cantidad Garantías']) || 0),
+        hectareasEnGarantia: typeof item?.hectareasEnGarantia === 'number' ? item.hectareasEnGarantia : parseDecimal(item?.['Hectáreas en Garantía'] ?? item?.hectareasEnGarantia),
+        bienesEnGarantia: typeof item?.bienesEnGarantia === 'number' ? item.bienesEnGarantia : (Number(item?.['Bienes en Garantía']) || 0),
+      }))
+    : [];
+
+  const stats: EstadisticasPanel = {
+    porUbicacion,
+    proximasAVencer,
+    totalProximasAVencer: typeof data?.totalProximasAVencer === 'number' ? data.totalProximasAVencer : proximasAVencer.length,
+    principalesClientes,
+    criterioClientes: data?.criterioClientes || 'Cuenta Prestatario',
+    periodoVencimientoDias: data?.periodoVencimientoDias || 30,
+  };
+
+  setToMemoryCache('estadisticas_panel', stats);
+  return stats;
+}
+
+/**
  * NORMALIZADORES DE DATOS RECIBIDOS DESDE GOOGLE SHEETS
  */
 export function normalizarCliente(item: any): Cliente {
@@ -604,6 +691,82 @@ export function normalizarGarantia(item: any): Garantia {
     ubicacionesResumen: item?.['Ubicaciones'] || '',
     cantidadLotes: typeof item?.['Cantidad Lotes'] === 'number' ? item['Cantidad Lotes'] : 0,
     cantidadBienes: typeof item?.['Cantidad Bienes'] === 'number' ? item['Cantidad Bienes'] : 0,
+  };
+}
+
+export function normalizarGarantiaLiberada(item: any): GarantiaLiberada {
+  const fecha =
+    item?.['Fecha'] ||
+    item?.fecha ||
+    item?.['Fecha de Garantía'] ||
+    item?.['Fecha Garantía'] ||
+    '';
+  const fechaLiberacion =
+    item?.['Fecha de Liberación'] ||
+    item?.['Fecha Liberación'] ||
+    item?.fechaLiberacion ||
+    item?.['Fecha de liberacion'] ||
+    item?.fecha_liberacion ||
+    '';
+  const fechaVencimiento =
+    item?.['Fecha de Vencimiento'] ||
+    item?.fechaVencimiento ||
+    item?.['Fecha Vencimiento'] ||
+    '';
+
+  return {
+    idGarantia:
+      item?.['ID Garantía'] ||
+      item?.idGarantia ||
+      item?.['ID Liberación'] ||
+      item?.idLiberacion ||
+      '',
+    idLiberacion: item?.['ID Liberación'] || item?.idLiberacion || undefined,
+    numeroSolicitud:
+      item?.['N.º Solicitud'] !== undefined && item?.['N.º Solicitud'] !== null
+        ? String(item['N.º Solicitud'])
+        : item?.numeroSolicitud !== undefined && item?.numeroSolicitud !== null
+        ? String(item.numeroSolicitud)
+        : '',
+    fecha,
+    fechaLiberacion,
+    fechaVencimiento,
+    cuentaPropietario: item?.['Cuenta Propietario'] ?? item?.cuentaPropietario ?? '',
+    propietario: item?.['Propietario'] || item?.propietario || '',
+    cuentaPrestatario: item?.['Cuenta Prestatario'] ?? item?.cuentaPrestatario ?? '',
+    prestatario: item?.['Prestatario'] || item?.prestatario || '',
+    garantiaConTipo: item?.['Garantía con Tipo'] || item?.garantiaConTipo || 'Cliente',
+    garantiaConCuenta: item?.['Garantía con Cuenta'] ?? item?.garantiaConCuenta ?? '',
+    garantiaConNombre: item?.['Garantía con Nombre'] || item?.garantiaConNombre || '',
+    tipoGarantia: item?.['Tipo de Garantía'] || item?.tipoGarantia || '',
+    modalidad: item?.['Modalidad'] || item?.modalidad || 'Simple',
+    observacion: item?.['Observación'] || item?.observacion || '',
+    motivoLiberacion:
+      item?.['Motivo Liberación'] ||
+      item?.['Motivo de Liberación'] ||
+      item?.motivoLiberacion ||
+      '',
+    lotes: [],
+    bienes: [],
+    lotesResumen: item?.['Lotes'] || item?.lotesResumen || '',
+    polizasResumen: item?.['Pólizas'] || item?.polizasResumen || '',
+    ubicacionesResumen: item?.['Ubicaciones'] || item?.ubicacionesResumen || '',
+    cantidadLotes:
+      typeof item?.['Cantidad Lotes'] === 'number'
+        ? item['Cantidad Lotes']
+        : item?.cantidadLotes || 0,
+    cantidadBienes:
+      typeof item?.['Cantidad Bienes'] === 'number'
+        ? item['Cantidad Bienes']
+        : item?.cantidadBienes || 0,
+    totalHectareas:
+      typeof item?.['Total Hectáreas'] === 'number'
+        ? item['Total Hectáreas']
+        : item?.totalHectareas,
+    totalValorBienesUSD:
+      typeof item?.['Total Valor Bienes ($us.)'] === 'number'
+        ? item['Total Valor Bienes ($us.)']
+        : item?.totalValorBienesUSD,
   };
 }
 
@@ -1581,7 +1744,7 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
 
 export async function liberarGarantia(idGarantia: string): Promise<any> {
   const result = await callAppsScript('liberarGarantia', { idGarantia });
-  invalidateMemoryCache(['garantias', 'lotes', 'bienes', 'dashboard', 'reportes']);
+  invalidateMemoryCache(['garantias', 'garantias-liberadas', 'lotes', 'bienes', 'dashboard', 'reportes', 'client-detail']);
   return result;
 }
 
@@ -1594,13 +1757,314 @@ export async function eliminarGarantia(idGarantia: string, password: string): Pr
     idGarantia: idGarantia.trim(),
     password: password.trim(),
   });
-  invalidateMemoryCache(['garantias', 'lotes', 'bienes', 'dashboard', 'reportes', 'client-detail']);
+  invalidateMemoryCache(['garantias', 'garantias-liberadas', 'lotes', 'bienes', 'dashboard', 'reportes', 'client-detail']);
   return result;
+}
+
+/**
+ * SERVICIOS DE HISTORIAL DE GARANTÍAS LIBERADAS
+ */
+export async function listarGarantiasLiberadas(
+  params: QueryParams,
+  forceRefresh: boolean = false
+): Promise<PaginatedResponse<GarantiaLiberada>> {
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<PaginatedResponse<GarantiaLiberada>>('garantias-liberadas', params);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('listarGarantiasLiberadas', {
+    page: params.page || 1,
+    pageSize: params.pageSize || 200,
+    search: params.search || '',
+    filters: params.filters || {},
+    sort: params.sortField
+      ? { field: params.sortField, direction: params.sortDirection || 'desc' }
+      : { field: 'fechaLiberacion', direction: 'desc' },
+  });
+
+  const rawItems = Array.isArray(res?.items) ? res.items : Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+  let items: GarantiaLiberada[] = rawItems.map(normalizarGarantiaLiberada);
+
+  // Filtro de respaldo si el backend no procesó la búsqueda
+  if (params.search && params.search.trim()) {
+    const q = params.search.trim();
+    items = items.filter((g: GarantiaLiberada) =>
+      matchesAnyField(
+        g,
+        [
+          'numeroSolicitud',
+          'propietario',
+          'prestatario',
+          'cuentaPropietario',
+          'cuentaPrestatario',
+          'garantiaConNombre',
+          'tipoGarantia',
+        ],
+        q
+      )
+    );
+  }
+
+  // Ordenar inicialmente por fecha de liberación (más recientes primero)
+  items.sort((a: GarantiaLiberada, b: GarantiaLiberada) => {
+    const timeA = new Date(a.fechaLiberacion || a.fecha || 0).getTime();
+    const timeB = new Date(b.fechaLiberacion || b.fecha || 0).getTime();
+    if (isNaN(timeA) || isNaN(timeB)) {
+      return (b.fechaLiberacion || '').localeCompare(a.fechaLiberacion || '');
+    }
+    return timeB - timeA;
+  });
+
+  const total = typeof res?.total === 'number' ? res.total : items.length;
+  const pageSize = params.pageSize || 200;
+  const totalPages =
+    typeof res?.totalPages === 'number'
+      ? res.totalPages
+      : Math.max(1, Math.ceil(total / pageSize));
+
+  const paginatedResult: PaginatedResponse<GarantiaLiberada> = {
+    data: items,
+    page: res?.page || params.page || 1,
+    pageSize,
+    total,
+    totalPages,
+    from: typeof res?.from === 'number' ? res.from : ((params.page || 1) - 1) * pageSize + 1,
+    to: typeof res?.to === 'number' ? res.to : Math.min((params.page || 1) * pageSize, total),
+  };
+
+  setToMemoryCache('garantias-liberadas', paginatedResult, params);
+  return paginatedResult;
+}
+
+export async function obtenerGarantiaLiberadaCompleta(
+  idGarantia: string,
+  forceRefresh: boolean = false
+): Promise<GarantiaLiberada | null> {
+  if (!idGarantia) return null;
+
+  const cacheKey = `garantia-liberada-completa:${idGarantia}`;
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<GarantiaLiberada>('garantias-liberadas', cacheKey);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('obtenerGarantiaLiberadaCompleta', { idGarantia });
+  if (!res) return null;
+
+  const rawG =
+    res.garantia ||
+    (res.idGarantia || res['ID Garantía'] || res.numeroSolicitud ? res : null);
+  if (!rawG) return null;
+
+  const base = normalizarGarantiaLiberada(rawG);
+  base.modalidad = rawG?.['Modalidad'] || rawG?.modalidad || 'Simple';
+
+  // Mapear relaciones de lotes históricos si existen
+  const lotesRelacionados: GarantiaLoteRelacion[] = [];
+  const sourceLotes = Array.isArray(res.lotes)
+    ? res.lotes
+    : Array.isArray(rawG.lotes)
+    ? rawG.lotes
+    : [];
+
+  for (const item of sourceLotes) {
+    if (!item) continue;
+    const rel = item.relacion || item;
+    const loteData = item.lote || (item.relacion ? undefined : item);
+
+    const idLote =
+      loteData?.['ID Lote'] ||
+      loteData?.idLote ||
+      rel?.['ID Lote'] ||
+      rel?.idLote ||
+      item['ID Lote'] ||
+      item.idLote ||
+      '';
+
+    const numeroLote =
+      loteData?.['N.º de Lote'] ||
+      loteData?.numeroLote ||
+      rel?.['N.º de Lote'] ||
+      rel?.numeroLote ||
+      item['N.º de Lote'] ||
+      item.numeroLote ||
+      '';
+
+    const haRelacion = rel?.['Hectáreas'] ?? rel?.hectareas;
+    const haLote = loteData?.['Hectáreas'] ?? loteData?.hectareas;
+    const haParsed =
+      typeof haRelacion === 'number'
+        ? haRelacion
+        : typeof haLote === 'number'
+        ? haLote
+        : parseDecimal(haRelacion ?? haLote ?? item['Hectáreas'] ?? item.hectareas);
+
+    const haTotales =
+      typeof haLote === 'number'
+        ? haLote
+        : haLote !== undefined
+        ? parseDecimal(haLote)
+        : undefined;
+
+    const prop =
+      loteData?.['Propietario'] ||
+      loteData?.propietario ||
+      rel?.['Propietario'] ||
+      rel?.propietario ||
+      item.propietario ||
+      '';
+
+    const ctaProp =
+      loteData?.['Cuenta Propietario'] ??
+      loteData?.cuentaPropietario ??
+      rel?.['Cuenta Propietario'] ??
+      rel?.cuentaPropietario ??
+      item.cuentaPropietario ??
+      '';
+
+    lotesRelacionados.push({
+      idGarantia: rel?.['ID Garantía'] || rel?.idGarantia || base.idGarantia,
+      idLote,
+      numeroLote,
+      hectareas: haParsed,
+      hectareasTotales: haTotales,
+      propietario: prop,
+      cuentaPropietario: ctaProp,
+      ubicacion:
+        loteData?.['Ubicación'] ||
+        loteData?.ubicacion ||
+        rel?.['Ubicación'] ||
+        rel?.ubicacion ||
+        '',
+      encargado: loteData?.['Encargado'] || loteData?.encargado || '',
+      garantiaConTipo: rel?.['Garantía con Tipo'] || rel?.garantiaConTipo || base.garantiaConTipo,
+      garantiaConCuenta: rel?.['Garantía con Cuenta'] ?? rel?.garantiaConCuenta ?? base.garantiaConCuenta,
+      garantiaConNombre: rel?.['Garantía con Nombre'] || rel?.garantiaConNombre || base.garantiaConNombre,
+    });
+  }
+
+  // Mapear relaciones de bienes históricos si existen
+  const bienesRelacionados: GarantiaBienRelacion[] = [];
+  const sourceBienes = Array.isArray(res.bienes)
+    ? res.bienes
+    : Array.isArray(rawG.bienes)
+    ? rawG.bienes
+    : [];
+
+  for (const item of sourceBienes) {
+    if (!item) continue;
+    const rel = item.relacion || item;
+    const bienData = item.bien || (item.relacion ? undefined : item);
+
+    const idBien =
+      bienData?.['ID Bien'] ||
+      bienData?.idBien ||
+      rel?.['ID Bien'] ||
+      rel?.idBien ||
+      item['ID Bien'] ||
+      item.idBien ||
+      '';
+
+    const numeroPoliza =
+      bienData?.['N.º Póliza'] ||
+      bienData?.numeroPoliza ||
+      rel?.['N.º Póliza'] ||
+      rel?.numeroPoliza ||
+      item['N.º Póliza'] ||
+      item.numeroPoliza ||
+      '';
+
+    const tipoBien =
+      bienData?.['Tipo de Bien'] ||
+      bienData?.tipoBien ||
+      rel?.['Tipo de Bien'] ||
+      rel?.tipoBien ||
+      item['Tipo de Bien'] ||
+      item.tipoBien ||
+      '';
+
+    const descripcion =
+      bienData?.['Descripción'] ||
+      bienData?.descripcion ||
+      rel?.['Descripción'] ||
+      rel?.descripcion ||
+      '';
+    const marca = bienData?.['Marca'] || bienData?.marca || rel?.['Marca'] || rel?.marca || '';
+    const modelo = bienData?.['Modelo'] || bienData?.modelo || rel?.['Modelo'] || rel?.modelo || '';
+    const placa = bienData?.['Placa'] || bienData?.placa || rel?.['Placa'] || rel?.placa || '';
+
+    const valUSD =
+      typeof rel?.['Valor en Garantía ($us.)'] === 'number'
+        ? rel['Valor en Garantía ($us.)']
+        : typeof rel?.valorGarantiaUSD === 'number'
+        ? rel.valorGarantiaUSD
+        : typeof rel?.valorEnGarantia === 'number'
+        ? rel.valorEnGarantia
+        : typeof bienData?.['Valor en Garantía ($us.)'] === 'number'
+        ? bienData['Valor en Garantía ($us.)']
+        : Number(
+            rel?.['Valor en Garantía ($us.)'] ||
+              rel?.valorGarantiaUSD ||
+              rel?.valorEnGarantia ||
+              bienData?.['Valor en Garantía ($us.)'] ||
+              0
+          ) || 0;
+
+    const prop =
+      bienData?.['Propietario'] ||
+      bienData?.propietario ||
+      rel?.['Propietario'] ||
+      rel?.propietario ||
+      item.propietario ||
+      '';
+
+    const ctaProp =
+      bienData?.['Cuenta Propietario'] ??
+      bienData?.cuentaPropietario ??
+      rel?.['Cuenta Propietario'] ??
+      rel?.cuentaPropietario ??
+      item.cuentaPropietario ??
+      '';
+
+    bienesRelacionados.push({
+      idGarantia: rel?.['ID Garantía'] || rel?.idGarantia || base.idGarantia,
+      idBien,
+      numeroPoliza,
+      tipoBien,
+      descripcion,
+      marca,
+      modelo,
+      placa,
+      propietario: prop,
+      cuentaPropietario: ctaProp,
+      ubicacion:
+        bienData?.['Ubicación'] ||
+        bienData?.ubicacion ||
+        rel?.['Ubicación'] ||
+        rel?.ubicacion ||
+        '',
+      valorGarantiaUSD: valUSD,
+      garantiaConTipo: rel?.['Garantía con Tipo'] || rel?.garantiaConTipo || base.garantiaConTipo,
+      garantiaConCuenta: rel?.['Garantía con Cuenta'] ?? rel?.garantiaConCuenta ?? base.garantiaConCuenta,
+      garantiaConNombre: rel?.['Garantía con Nombre'] || rel?.garantiaConNombre || base.garantiaConNombre,
+    });
+  }
+
+  base.lotes = lotesRelacionados;
+  base.bienes = bienesRelacionados;
+  base.cantidadLotes = lotesRelacionados.length;
+  base.cantidadBienes = bienesRelacionados.length;
+
+  setToMemoryCache('garantias-liberadas', base, cacheKey);
+  return base;
 }
 
 // Aliases para retrocompatibilidad
 export const getGarantias = listarGarantias;
 export const getGarantiaById = obtenerGarantiaCompleta;
+export const getGarantiasLiberadas = listarGarantiasLiberadas;
+export const getGarantiaLiberadaById = obtenerGarantiaLiberadaCompleta;
 export const saveGarantia = async (garantia: Partial<Garantia>, isEdit: boolean) =>
   isEdit ? editarGarantia(garantia) : crearGarantia(garantia);
 export const deleteGarantia = eliminarGarantia;

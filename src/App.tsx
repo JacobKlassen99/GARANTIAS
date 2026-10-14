@@ -19,6 +19,7 @@ import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { NuevaGarantia } from './pages/NuevaGarantia';
 import { GarantiasList } from './pages/GarantiasList';
+import { GarantiasLiberadasList } from './pages/GarantiasLiberadasList';
 import { ClientesList } from './pages/ClientesList';
 import { LotesList } from './pages/LotesList';
 import { BienesList } from './pages/BienesList';
@@ -37,6 +38,29 @@ export default function App() {
   const [openNewClienteDirect, setOpenNewClienteDirect] = useState(false);
   const [openNewLoteDirect, setOpenNewLoteDirect] = useState(false);
   const [openNewBienDirect, setOpenNewBienDirect] = useState(false);
+  const [initialLoteFilter, setInitialLoteFilter] = useState<string | undefined>(undefined);
+  const [initialLoteSearch, setInitialLoteSearch] = useState<string | undefined>(undefined);
+  const [initialBienFilter, setInitialBienFilter] = useState<string | undefined>(undefined);
+  const [initialBienSearch, setInitialBienSearch] = useState<string | undefined>(undefined);
+  const [initialGarantiaSearch, setInitialGarantiaSearch] = useState<string | undefined>(undefined);
+
+  const handleNavigate = (
+    sec: NavSection,
+    options?: { filterEstado?: string; search?: string }
+  ) => {
+    if (sec === 'lotes') {
+      setInitialLoteFilter(options?.filterEstado);
+      setInitialLoteSearch(options?.search);
+    }
+    if (sec === 'bienes') {
+      setInitialBienFilter(options?.filterEstado);
+      setInitialBienSearch(options?.search);
+    }
+    if (sec === 'garantias') {
+      setInitialGarantiaSearch(options?.search);
+    }
+    setCurrentSection(sec);
+  };
 
   const handleLoginSuccess = async () => {
     setIsAuthenticated(true);
@@ -99,7 +123,7 @@ export default function App() {
             <ErrorBoundary>
             {currentSection === 'dashboard' && (
               <Dashboard
-                onNavigate={(sec) => setCurrentSection(sec)}
+                onNavigate={handleNavigate}
                 onOpenNuevoCliente={() => {
                   setOpenNewClienteDirect(true);
                   setCurrentSection('clientes');
@@ -118,12 +142,19 @@ export default function App() {
             {currentSection === 'nueva-garantia' && (
               <NuevaGarantia
                 onSuccessCreated={() => setCurrentSection('garantias')}
-                onNavigate={(sec) => setCurrentSection(sec)}
+                onNavigate={handleNavigate}
               />
             )}
 
             {currentSection === 'garantias' && (
-              <GarantiasList onNavigate={(sec) => setCurrentSection(sec)} />
+              <GarantiasList
+                onNavigate={handleNavigate}
+                initialSearch={initialGarantiaSearch}
+              />
+            )}
+
+            {currentSection === 'garantias-liberadas' && (
+              <GarantiasLiberadasList onNavigate={handleNavigate} />
             )}
 
             {currentSection === 'clientes' && (
@@ -137,6 +168,8 @@ export default function App() {
               <LotesList
                 initialOpenNew={openNewLoteDirect}
                 onCloseNew={() => setOpenNewLoteDirect(false)}
+                initialFilterEstado={initialLoteFilter}
+                initialSearch={initialLoteSearch}
               />
             )}
 
@@ -144,6 +177,8 @@ export default function App() {
               <BienesList
                 initialOpenNew={openNewBienDirect}
                 onCloseNew={() => setOpenNewBienDirect(false)}
+                initialFilterEstado={initialBienFilter}
+                initialSearch={initialBienSearch}
               />
             )}
 

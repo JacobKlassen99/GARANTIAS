@@ -31,9 +31,16 @@ import { formatHectareas, formatFecha, getTodayIso, parseDecimal } from '../util
 interface LotesListProps {
   initialOpenNew?: boolean;
   onCloseNew?: () => void;
+  initialFilterEstado?: string;
+  initialSearch?: string;
 }
 
-export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, onCloseNew }) => {
+export const LotesList: React.FC<LotesListProps> = ({
+  initialOpenNew = false,
+  onCloseNew,
+  initialFilterEstado,
+  initialSearch,
+}) => {
   const [lotes, setLotes] = useState<Lote[]>([]);
   const [clientesList, setClientesList] = useState<Cliente[]>([]);
   const [total, setTotal] = useState(0);
@@ -42,9 +49,9 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
   const [toRecord, setToRecord] = useState(0);
   const [page, setPage] = useState(1);
   const pageSize = 200;
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [filtroEstado, setFiltroEstado] = useState<string>('todos');
+  const [search, setSearch] = useState(initialSearch || '');
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch || '');
+  const [filtroEstado, setFiltroEstado] = useState<string>(initialFilterEstado || 'todos');
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
@@ -91,6 +98,21 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
       handleOpenCreate();
     }
   }, [initialOpenNew]);
+
+  useEffect(() => {
+    if (initialFilterEstado !== undefined) {
+      setFiltroEstado(initialFilterEstado);
+      setPage(1);
+    }
+  }, [initialFilterEstado]);
+
+  useEffect(() => {
+    if (initialSearch !== undefined) {
+      setSearch(initialSearch);
+      setDebouncedSearch(initialSearch);
+      setPage(1);
+    }
+  }, [initialSearch]);
 
   const loadData = async (
     targetPage = page,

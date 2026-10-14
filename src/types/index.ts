@@ -133,6 +133,35 @@ export interface Garantia {
   totalValorBienesUSD?: number;
 }
 
+export interface GarantiaLiberada {
+  idGarantia: string;
+  idLiberacion?: string;
+  numeroSolicitud: string;
+  fecha: string; // Fecha de garantía
+  fechaLiberacion: string; // Fecha de liberación
+  fechaVencimiento?: string;
+  cuentaPropietario: string | number;
+  propietario: string;
+  cuentaPrestatario: string | number;
+  prestatario: string;
+  garantiaConTipo: TipoGarantiaCon | string;
+  garantiaConCuenta?: string | number;
+  garantiaConNombre: string;
+  tipoGarantia: string;
+  modalidad?: 'Simple' | 'Múltiple' | string;
+  observacion?: string;
+  motivoLiberacion?: string;
+  lotes: GarantiaLoteRelacion[];
+  bienes: GarantiaBienRelacion[];
+  lotesResumen?: string;
+  polizasResumen?: string;
+  ubicacionesResumen?: string;
+  cantidadLotes?: number;
+  cantidadBienes?: number;
+  totalHectareas?: number;
+  totalValorBienesUSD?: number;
+}
+
 export interface DetalleClienteGarantia {
   idGarantia: string;
   numeroSolicitud: string;
@@ -225,6 +254,44 @@ export interface DashboardStats {
   garantiasExternas: number | null;
   lotesBloqueados: number | null;
   bienesBloqueados: number | null;
+}
+
+export interface UbicacionEstadistica {
+  ubicacion: string;
+  cantidadLotes: number;
+  hectareasTotales: number;
+  hectareasEnGarantia: number;
+  hectareasDisponibles: number;
+  hectareasBloqueadas: number;
+}
+
+export interface GarantiaProximaVencer {
+  idGarantia: string;
+  numeroSolicitud: string | number;
+  propietario: string;
+  cuentaPropietario?: string | number;
+  prestatario: string;
+  cuentaPrestatario?: string | number;
+  fechaVencimiento: string;
+  diasRestantes?: number;
+  estadoVencimiento?: 'Vencida' | 'Próxima a vencer' | 'Vigente' | 'Sin vencimiento';
+}
+
+export interface ClienteEstadistica {
+  cuenta: string | number;
+  nombre: string;
+  cantidadGarantias: number;
+  hectareasEnGarantia: number;
+  bienesEnGarantia?: number;
+}
+
+export interface EstadisticasPanel {
+  porUbicacion: UbicacionEstadistica[];
+  proximasAVencer: GarantiaProximaVencer[];
+  totalProximasAVencer: number;
+  principalesClientes: ClienteEstadistica[];
+  criterioClientes?: string;
+  periodoVencimientoDias?: number;
 }
 
 export interface QueryParams {

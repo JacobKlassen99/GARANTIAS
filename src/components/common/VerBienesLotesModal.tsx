@@ -8,22 +8,24 @@ import {
   Tractor,
   MapPin,
 } from 'lucide-react';
-import { Garantia } from '../../types';
-import { obtenerGarantiaCompleta } from '../../services/backend';
+import { Garantia, GarantiaLiberada } from '../../types';
+import { obtenerGarantiaCompleta, obtenerGarantiaLiberadaCompleta } from '../../services/backend';
 import { formatHectareas, formatPropietario } from '../../utils/textSearch';
 
 interface VerBienesLotesModalProps {
   idGarantia: string;
   numeroSolicitud?: string;
+  isLiberada?: boolean;
   onClose: () => void;
 }
 
 export const VerBienesLotesModal: React.FC<VerBienesLotesModalProps> = ({
   idGarantia,
   numeroSolicitud,
+  isLiberada = false,
   onClose,
 }) => {
-  const [garantiaCompleta, setGarantiaCompleta] = useState<Garantia | null>(null);
+  const [garantiaCompleta, setGarantiaCompleta] = useState<Garantia | GarantiaLiberada | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,10 @@ export const VerBienesLotesModal: React.FC<VerBienesLotesModalProps> = ({
     setError(null);
 
     try {
-      const data = await obtenerGarantiaCompleta(idGarantia, forceRefresh);
+      const data = isLiberada
+        ? await obtenerGarantiaLiberadaCompleta(idGarantia, forceRefresh)
+        : await obtenerGarantiaCompleta(idGarantia, forceRefresh);
+
       if (data) {
         setGarantiaCompleta(data);
       } else {
@@ -85,9 +90,16 @@ export const VerBienesLotesModal: React.FC<VerBienesLotesModalProps> = ({
             <div>
               <h3 className="text-sm font-bold tracking-tight">
                 Bienes y Lotes — Solicitud N.º {numSolicitudDisplay}
+                {isLiberada && (
+                  <span className="ml-2 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                    Liberada
+                  </span>
+                )}
               </h3>
               <p className="text-[11px] text-slate-300">
-                Consulta directa de bienes muebles y parcelas respaldando la operación
+                {isLiberada
+                  ? 'Consulta de parcelas y bienes al momento de la liberación'
+                  : 'Consulta directa de bienes muebles y parcelas respaldando la operación'}
               </p>
             </div>
           </div>

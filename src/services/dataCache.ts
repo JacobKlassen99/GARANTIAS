@@ -86,7 +86,10 @@ export function hasInMemoryCache(namespace: string, params?: Record<string, any>
  * Se llama cuando se crean, editan o eliminan registros
  */
 export function invalidateMemoryCache(namespaces: string | string[]): void {
-  const list = Array.isArray(namespaces) ? namespaces : [namespaces];
+  const list = Array.isArray(namespaces) ? [...namespaces] : [namespaces];
+  if (list.includes('dashboard') && !list.includes('estadisticas_panel')) {
+    list.push('estadisticas_panel');
+  }
   for (const ns of list) {
     const prefix = `${ns}`;
     for (const key of Array.from(memoryCache.keys())) {

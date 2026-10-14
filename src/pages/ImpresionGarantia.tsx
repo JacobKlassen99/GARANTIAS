@@ -1,14 +1,23 @@
 import React, { useState } from 'react';
 import { Printer, Download, X, ShieldCheck, AlertCircle } from 'lucide-react';
-import { Garantia } from '../types';
+import { Garantia, GarantiaLiberada } from '../types';
 import { formatFecha, formatHectareas, formatPropietario } from '../utils/textSearch';
 
 interface ImpresionGarantiaProps {
-  garantia: Garantia;
+  garantia: Garantia | GarantiaLiberada;
+  isLiberada?: boolean;
+  fechaLiberacion?: string;
   onClose: () => void;
 }
 
-export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, onClose }) => {
+export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
+  garantia,
+  isLiberada: isLiberadaProp,
+  fechaLiberacion: fechaLiberacionProp,
+  onClose,
+}) => {
+  const isLiberada = isLiberadaProp || !!(garantia as GarantiaLiberada).fechaLiberacion;
+  const fechaLiberacion = fechaLiberacionProp || (garantia as GarantiaLiberada).fechaLiberacion;
   // CAMPO TEMPORAL: IDENTIFICACIÓN
   // REGLA CRÍTICA: NO se guarda en Google Sheets, NO en garantias, NO en bienes, NO en localStorage.
   // Vive únicamente en el estado local de React durante esta sesión de visualización.
@@ -127,21 +136,42 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
         </div>
 
         {/* HOJA DE DOCUMENTO IMPRIMIBLE (Estilo oficial Colonia Chihuahua) */}
-        <div className="overflow-y-auto p-6 sm:p-12 bg-white text-slate-900 print:p-0 print:m-0 print:overflow-visible font-serif text-[12pt] leading-normal select-text">
+        <div className="overflow-y-auto p-6 sm:p-12 bg-white text-slate-900 print:p-0 print:m-0 print:overflow-visible font-serif text-[12pt] leading-normal select-text relative">
+          {isLiberada && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-[0.06] select-none z-0 overflow-hidden">
+              <span className="text-7xl sm:text-9xl font-black uppercase tracking-widest text-slate-900 -rotate-45">
+                LIBERADA
+              </span>
+            </div>
+          )}
+
           {/* Encabezado Oficial */}
-          <div className="text-center pb-4 border-b-2 border-slate-900 mb-6">
+          <div className="text-center pb-4 border-b-2 border-slate-900 mb-6 relative z-10">
             <h1 className="text-base sm:text-lg font-black uppercase tracking-wider">
               ASOCIACIÓN CIVIL "COLONIA CHIHUAHUA"
             </h1>
             <p className="text-[10pt] font-semibold tracking-widest uppercase text-slate-700 mt-0.5">
               DEPARTAMENTO DE ADMINISTRACIÓN Y REGISTRO DE PARCELAS
             </p>
-            <div className="mt-3 inline-block border-2 border-slate-900 px-5 py-1 font-black text-sm uppercase tracking-wider bg-slate-50">
-              {documentTitle}
+            <div className="mt-3 flex flex-col items-center gap-1.5">
+              <div className="inline-block border-2 border-slate-900 px-5 py-1 font-black text-sm uppercase tracking-wider bg-slate-50">
+                {documentTitle}
+              </div>
+              {isLiberada && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-0.5 bg-amber-50 border border-amber-300 text-amber-900 font-sans font-bold text-[11px] uppercase tracking-wider rounded">
+                  <span>COPIA DE CONSULTA — GARANTÍA LIBERADA</span>
+                </div>
+              )}
             </div>
             <div className="mt-2 text-right text-xs font-mono">
               <strong>N.º Solicitud:</strong> {garantia.numeroSolicitud} &nbsp;|&nbsp;{' '}
               <strong>Fecha:</strong> {formatFecha(garantia.fecha)}
+              {isLiberada && fechaLiberacion && (
+                <>
+                  {' '}&nbsp;|&nbsp;{' '}
+                  <strong className="text-amber-900">Liberada el:</strong> {formatFecha(fechaLiberacion)}
+                </>
+              )}
             </div>
           </div>
 

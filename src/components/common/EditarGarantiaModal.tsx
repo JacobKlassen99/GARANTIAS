@@ -28,6 +28,8 @@ import {
   getBienes,
 } from '../../services/backend';
 import { ClientSearchAutocomplete } from './ClientSearchAutocomplete';
+import { SeleccionarLoteModal } from './SeleccionarLoteModal';
+import { SeleccionarBienModal } from './SeleccionarBienModal';
 import { formatHectareas, formatPropietario, parseDecimal } from '../../utils/textSearch';
 
 interface EditarGarantiaModalProps {
@@ -65,18 +67,11 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
   const [availableLotes, setAvailableLotes] = useState<Lote[]>([]);
   const [availableBienes, setAvailableBienes] = useState<Bien[]>([]);
 
-  // Modales secundarios de selección
+  // Modales de selección unificados
   const [isAddingLote, setIsAddingLote] = useState(false);
   const [isAddingBien, setIsAddingBien] = useState(false);
-  const [tempLoteHa, setTempLoteHa] = useState<number | string>(0);
-  const [tempLoteTarget, setTempLoteTarget] = useState<Lote | null>(null);
-  const [tempLoteGarantiaCon, setTempLoteGarantiaCon] = useState<TipoGarantiaCon>('Farmer Rechnung');
-  const [tempLoteCliente, setTempLoteCliente] = useState<Cliente | null>(null);
-
-  const [tempBienValUSD, setTempBienValUSD] = useState<number>(0);
-  const [tempBienTarget, setTempBienTarget] = useState<Bien | null>(null);
-  const [tempBienGarantiaCon, setTempBienGarantiaCon] = useState<TipoGarantiaCon>('Farmer Rechnung');
-  const [tempBienCliente, setTempBienCliente] = useState<Cliente | null>(null);
+  const [originalLotes, setOriginalLotes] = useState<{ idLote: string | number; hectareas: number }[]>([]);
+  const [originalBienIds, setOriginalBienIds] = useState<(string | number)[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -127,6 +122,9 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
           setObservacion(garantiaFull.observacion || '');
 
           const rawLotes = Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : [];
+          setOriginalLotes(
+            rawLotes.map((l) => ({ idLote: l.idLote, hectareas: Number(l.hectareas) || 0 }))
+          );
           const lotesEnriquecidos = rawLotes.map((lote) => {
             const masterLote = lList.find((l) => String(l.idLote) === String(lote.idLote));
             return {
@@ -138,6 +136,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
           setLotes(lotesEnriquecidos);
 
           const rawBienes = Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : [];
+          setOriginalBienIds(rawBienes.map((b) => b.idBien));
           const bienesEnriquecidos = rawBienes.map((bien) => {
             const masterBien = bList.find((b) => String(b.idBien) === String(bien.idBien));
             return {
@@ -174,91 +173,18 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
     setBienes((prev) => prev.filter((b) => b.idBien !== idBien));
   };
 
-  const handleConfirmAddLote = () => {
-    if (!tempLoteTarget) return;
-    const haNum = parseDecimal(tempLoteHa);
-    if (haNum <= 0) {
-      alert('Las hectáreas a poner en garantía deben ser mayores a 0.');
-      return;
-    }
-    if (tempLoteGarantiaCon === 'Cliente' && !tempLoteCliente) {
-      alert('Debe seleccionar el cliente registrado para este lote.');
-      return;
-    }
-    const gTipo = tempLoteGarantiaCon;
-    const gNombre =
-      gTipo === 'Cliente' && tempLoteCliente
-        ? `${tempLoteCliente.cuenta} — ${tempLoteCliente.nombre}`
-        : gTipo;
-
-    const gCuenta =
-      gTipo === 'Cliente' && tempLoteCliente ? tempLoteCliente.cuenta : undefined;
-
+  const handleSelectLoteFromModal = (loteRel: GarantiaLoteRelacion) => {
     setLotes((prev) => [
-      ...prev.filter((l) => l.idLote !== tempLoteTarget.idLote),
-      {
-        idGarantia,
-        idLote: tempLoteTarget.idLote,
-        numeroLote: tempLoteTarget.numeroLote,
-        hectareas: haNum,
-        propietario: tempLoteTarget.propietario,
-        cuentaPropietario: tempLoteTarget.cuentaPropietario,
-        ubicacion: tempLoteTarget.ubicacion,
-        encargado: tempLoteTarget.encargado,
-        garantiaConTipo: gTipo,
-        garantiaConCuenta: gCuenta,
-        garantiaConNombre: gNombre,
-      },
+      ...prev.filter((l) => String(l.idLote) !== String(loteRel.idLote)),
+      { ...loteRel, idGarantia },
     ]);
-
-    setTempLoteTarget(null);
-    setTempLoteHa(0);
-    setIsAddingLote(false);
   };
 
-  const handleConfirmAddBien = () => {
-    if (!tempBienTarget) return;
-    if (tempBienValUSD < 0) {
-      alert('El valor en garantía debe ser un número válido.');
-      return;
-    }
-    if (tempBienGarantiaCon === 'Cliente' && !tempBienCliente) {
-      alert('Debe seleccionar el cliente registrado para este bien.');
-      return;
-    }
-    const gTipo = tempBienGarantiaCon;
-    const gNombre =
-      gTipo === 'Cliente' && tempBienCliente
-        ? `${tempBienCliente.cuenta} — ${tempBienCliente.nombre}`
-        : gTipo;
-
-    const gCuenta =
-      gTipo === 'Cliente' && tempBienCliente ? tempBienCliente.cuenta : undefined;
-
+  const handleSelectBienFromModal = (bienRel: GarantiaBienRelacion) => {
     setBienes((prev) => [
-      ...prev.filter((b) => b.idBien !== tempBienTarget.idBien),
-      {
-        idGarantia,
-        idBien: tempBienTarget.idBien,
-        numeroPoliza: tempBienTarget.numeroPoliza,
-        tipoBien: tempBienTarget.tipoBien,
-        descripcion: tempBienTarget.descripcion,
-        marca: tempBienTarget.marca,
-        modelo: tempBienTarget.modelo,
-        placa: tempBienTarget.placa,
-        propietario: tempBienTarget.propietario,
-        cuentaPropietario: tempBienTarget.cuentaPropietario,
-        ubicacion: tempBienTarget.ubicacion,
-        valorGarantiaUSD: tempBienValUSD,
-        garantiaConTipo: gTipo,
-        garantiaConCuenta: gCuenta,
-        garantiaConNombre: gNombre,
-      },
+      ...prev.filter((b) => String(b.idBien) !== String(bienRel.idBien)),
+      { ...bienRel, idGarantia },
     ]);
-
-    setTempBienTarget(null);
-    setTempBienValUSD(0);
-    setIsAddingBien(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -552,11 +478,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setTempLoteGarantiaCon(garantiaConTipo);
-                      setTempLoteCliente(selectedGarantiaCliente);
-                      setIsAddingLote(true);
-                    }}
+                    onClick={() => setIsAddingLote(true)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 rounded border border-emerald-300 cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
@@ -564,11 +486,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setTempBienGarantiaCon(garantiaConTipo);
-                      setTempBienCliente(selectedGarantiaCliente);
-                      setIsAddingBien(true);
-                    }}
+                    onClick={() => setIsAddingBien(true)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-900 bg-blue-100 hover:bg-blue-200 rounded border border-blue-300 cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
@@ -844,264 +762,34 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
           </form>
         )}
 
-        {/* MODAL AGREGAR LOTE */}
-        {isAddingLote && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-lg bg-white rounded-lg shadow-xl border border-slate-300 overflow-hidden">
-              <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between text-xs font-bold uppercase">
-                <span className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Añadir Lote a la Garantía</span>
-                </span>
-                <button onClick={() => setIsAddingLote(false)} className="text-slate-400 hover:text-white">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+        {/* MODAL SELECCIONAR LOTE */}
+        <SeleccionarLoteModal
+          isOpen={isAddingLote}
+          onClose={() => setIsAddingLote(false)}
+          onSelectLote={handleSelectLoteFromModal}
+          alreadySelectedLoteIds={lotes.map((l) => l.idLote)}
+          originalGarantiaLotes={originalLotes}
+          clientesList={clientesList}
+          modalidad={modalidad}
+          defaultGarantiaConTipo={garantiaConTipo}
+          defaultGarantiaCliente={selectedGarantiaCliente}
+          availableLotes={availableLotes}
+        />
 
-              <div className="p-4 space-y-3 text-xs">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Seleccionar Lote:</label>
-                  <select
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded"
-                    value={tempLoteTarget?.idLote || ''}
-                    onChange={(e) => {
-                      const selected = availableLotes.find((l) => l.idLote === e.target.value) || null;
-                      setTempLoteTarget(selected);
-                      if (selected) {
-                        const disp = selected.hectareasDisponibles !== undefined ? selected.hectareasDisponibles : selected.hectareas;
-                        setTempLoteHa(disp);
-                      }
-                    }}
-                  >
-                    <option value="">-- Elija un lote --</option>
-                    {availableLotes.map((lote) => {
-                      const disp = lote.hectareasDisponibles !== undefined ? lote.hectareasDisponibles : lote.hectareas;
-                      return (
-                        <option
-                          key={lote.idLote}
-                          value={lote.idLote}
-                          disabled={lote.estado === 'Bloqueado' || lote.estado === 'Inactivo'}
-                        >
-                          Lote {lote.numeroLote} — {lote.propietario} (Disp: {formatHectareas(disp)}) {lote.estado === 'Bloqueado' ? '[BLOQUEADO]' : ''}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-
-                {tempLoteTarget && (
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded space-y-2">
-                    <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-                      <div>Propietario: <strong>{tempLoteTarget.propietario}</strong></div>
-                      <div>Ubicación: <strong>{tempLoteTarget.ubicacion || '—'}</strong></div>
-                      <div>Hectáreas Totales: <strong>{formatHectareas(tempLoteTarget.hectareas)}</strong></div>
-                      <div>Disponibles: <strong className="text-emerald-800">{formatHectareas(tempLoteTarget.hectareasDisponibles !== undefined ? tempLoteTarget.hectareasDisponibles : tempLoteTarget.hectareas)}</strong></div>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">
-                        Hectáreas a poner en garantía:
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        value={tempLoteHa}
-                        onChange={(e) => setTempLoteHa(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded font-mono font-bold text-xs"
-                      />
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-200 space-y-2">
-                      <label className="block text-[11px] font-bold text-slate-700">
-                        Garantía Constituida Con (Acreedor de este lote):
-                      </label>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => (
-                          <button
-                            key={tipo}
-                            type="button"
-                            onClick={() => {
-                              setTempLoteGarantiaCon(tipo);
-                              if (tipo !== 'Cliente') setTempLoteCliente(null);
-                            }}
-                            className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
-                              tempLoteGarantiaCon === tipo
-                                ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
-                                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                            }`}
-                          >
-                            {tipo === 'Cliente' ? 'Cliente registrado' : tipo}
-                          </button>
-                        ))}
-                      </div>
-
-                      {tempLoteGarantiaCon === 'Cliente' && (
-                        <div className="pt-1">
-                          <ClientSearchAutocomplete
-                            label="Cliente Receptor de este Lote"
-                            placeholder="Buscar cliente registrado por cuenta o nombre..."
-                            clientesList={clientesList}
-                            selectedCuenta={tempLoteCliente?.cuenta}
-                            onSelect={setTempLoteCliente}
-                            required
-                            helperText="Seleccione el cliente que recibe la garantía sobre este lote."
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingLote(false)}
-                    className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded border border-slate-300"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmAddLote}
-                    disabled={!tempLoteTarget || parseDecimal(tempLoteHa) <= 0}
-                    className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded disabled:opacity-50"
-                  >
-                    Confirmar Lote
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL AGREGAR BIEN */}
-        {isAddingBien && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-lg bg-white rounded-lg shadow-xl border border-slate-300 overflow-hidden">
-              <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between text-xs font-bold uppercase">
-                <span className="flex items-center gap-1.5">
-                  <Tractor className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Añadir Bien a la Garantía</span>
-                </span>
-                <button onClick={() => setIsAddingBien(false)} className="text-slate-400 hover:text-white">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="p-4 space-y-3 text-xs">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Seleccionar Bien / Maquinaria:</label>
-                  <select
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded"
-                    value={tempBienTarget?.idBien || ''}
-                    onChange={(e) => {
-                      const selected = availableBienes.find((b) => b.idBien === e.target.value) || null;
-                      setTempBienTarget(selected);
-                      if (selected) {
-                        setTempBienValUSD(selected.valorGarantiaUSD || 0);
-                      }
-                    }}
-                  >
-                    <option value="">-- Elija un bien --</option>
-                    {availableBienes.map((bien) => (
-                      <option
-                        key={bien.idBien}
-                        value={bien.idBien}
-                        disabled={bien.estado === 'Bloqueado' || bien.estado === 'Inactivo'}
-                      >
-                        {bien.numeroPoliza} — {bien.tipoBien} {bien.descripcion || bien.marca} ({bien.propietario}) {bien.estado === 'Bloqueado' ? '[BLOQUEADO]' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {tempBienTarget && (
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded space-y-2">
-                    <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-                      <div>Póliza: <strong>{tempBienTarget.numeroPoliza}</strong></div>
-                      <div>Tipo: <strong>{tempBienTarget.tipoBien}</strong></div>
-                      <div>Propietario: <strong>{tempBienTarget.propietario}</strong></div>
-                      <div>Placa / Ubicación: <strong>{tempBienTarget.placa || tempBienTarget.ubicacion || '—'}</strong></div>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">
-                        VALOR EN GARANTÍA ($us.):
-                      </label>
-                      <input
-                        type="number"
-                        step="100"
-                        min="0"
-                        value={tempBienValUSD}
-                        onChange={(e) => setTempBienValUSD(parseFloat(e.target.value) || 0)}
-                        placeholder="Ej: 50000"
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded font-mono font-bold text-xs"
-                      />
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-200 space-y-2">
-                      <label className="block text-[11px] font-bold text-slate-700">
-                        Garantía Constituida Con (Acreedor de este bien):
-                      </label>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => (
-                          <button
-                            key={tipo}
-                            type="button"
-                            onClick={() => {
-                              setTempBienGarantiaCon(tipo);
-                              if (tipo !== 'Cliente') setTempBienCliente(null);
-                            }}
-                            className={`py-1 px-2 text-[11px] font-bold rounded border transition text-center cursor-pointer ${
-                              tempBienGarantiaCon === tipo
-                                ? 'bg-blue-800 text-white border-blue-900 shadow-xs'
-                                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                            }`}
-                          >
-                            {tipo === 'Cliente' ? 'Cliente registrado' : tipo}
-                          </button>
-                        ))}
-                      </div>
-
-                      {tempBienGarantiaCon === 'Cliente' && (
-                        <div className="pt-1">
-                          <ClientSearchAutocomplete
-                            label="Cliente Receptor de este Bien"
-                            placeholder="Buscar cliente registrado por cuenta o nombre..."
-                            clientesList={clientesList}
-                            selectedCuenta={tempBienCliente?.cuenta}
-                            onSelect={setTempBienCliente}
-                            required
-                            helperText="Seleccione el cliente que recibe la garantía sobre este bien."
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingBien(false)}
-                    className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded border border-slate-300"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmAddBien}
-                    disabled={!tempBienTarget || tempBienValUSD < 0}
-                    className="px-4 py-1.5 text-xs font-bold text-white bg-blue-800 hover:bg-blue-900 rounded disabled:opacity-50"
-                  >
-                    Confirmar Bien
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* MODAL SELECCIONAR BIEN */}
+        <SeleccionarBienModal
+          isOpen={isAddingBien}
+          onClose={() => setIsAddingBien(false)}
+          onSelectBien={handleSelectBienFromModal}
+          alreadySelectedBienIds={bienes.map((b) => b.idBien)}
+          originalGarantiaBienIds={originalBienIds}
+          currentNumeroSolicitud={numeroSolicitud}
+          clientesList={clientesList}
+          modalidad={modalidad}
+          defaultGarantiaConTipo={garantiaConTipo}
+          defaultGarantiaCliente={selectedGarantiaCliente}
+          availableBienes={availableBienes}
+        />
       </div>
     </div>
   );

@@ -34,9 +34,16 @@ import { getTodayIso } from '../utils/textSearch';
 interface BienesListProps {
   initialOpenNew?: boolean;
   onCloseNew?: () => void;
+  initialFilterEstado?: string;
+  initialSearch?: string;
 }
 
-export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, onCloseNew }) => {
+export const BienesList: React.FC<BienesListProps> = ({
+  initialOpenNew = false,
+  onCloseNew,
+  initialFilterEstado,
+  initialSearch,
+}) => {
   const [bienes, setBienes] = useState<Bien[]>([]);
   const [clientesList, setClientesList] = useState<Cliente[]>([]);
   const [total, setTotal] = useState(0);
@@ -45,10 +52,10 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
   const [toRecord, setToRecord] = useState(0);
   const [page, setPage] = useState(1);
   const pageSize = 200;
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch || '');
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch || '');
   const [filtroTipo, setFiltroTipo] = useState<string>('todos');
-  const [filtroEstado, setFiltroEstado] = useState<string>('todos');
+  const [filtroEstado, setFiltroEstado] = useState<string>(initialFilterEstado || 'todos');
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
@@ -100,6 +107,21 @@ export const BienesList: React.FC<BienesListProps> = ({ initialOpenNew = false, 
       handleOpenCreate();
     }
   }, [initialOpenNew]);
+
+  useEffect(() => {
+    if (initialFilterEstado !== undefined) {
+      setFiltroEstado(initialFilterEstado);
+      setPage(1);
+    }
+  }, [initialFilterEstado]);
+
+  useEffect(() => {
+    if (initialSearch !== undefined) {
+      setSearch(initialSearch);
+      setDebouncedSearch(initialSearch);
+      setPage(1);
+    }
+  }, [initialSearch]);
 
   const loadData = async (
     targetPage = page,

@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   FilePlus,
   FileCheck2,
+  Archive,
   Menu,
   X,
   Users,
@@ -41,6 +42,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentSection, onSelectSe
 
   const moreItems: { id: NavSection; label: string; icon: React.ReactNode; desc: string }[] = [
     {
+      id: 'garantias-liberadas',
+      label: 'Garantías Liberadas',
+      icon: <Archive className="w-5 h-5 text-emerald-700" />,
+      desc: 'Historial de garantías liberadas',
+    },
+    {
       id: 'clientes',
       label: 'Clientes',
       icon: <Users className="w-5 h-5 text-emerald-700" />,
@@ -77,7 +84,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentSection, onSelectSe
     setShowMoreMenu(false);
   };
 
-  const isMoreActive = ['clientes', 'lotes', 'bienes', 'reportes', 'configuracion'].includes(
+  const isMoreActive = ['garantias-liberadas', 'clientes', 'lotes', 'bienes', 'reportes', 'configuracion'].includes(
     currentSection
   );
 

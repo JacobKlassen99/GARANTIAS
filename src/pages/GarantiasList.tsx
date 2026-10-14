@@ -6,7 +6,7 @@ import {
   Eye,
   Printer,
   Edit2,
-  Unlock,
+  Unlink2,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -30,14 +30,15 @@ import { NavSection } from '../components/layout/Sidebar';
 
 interface GarantiasListProps {
   onNavigate: (section: NavSection) => void;
+  initialSearch?: string;
 }
 
-export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
+export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initialSearch }) => {
   const [garantias, setGarantias] = useState<Garantia[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(200);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch || '');
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
@@ -100,6 +101,13 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
   useEffect(() => {
     loadData(false);
   }, [page]);
+
+  useEffect(() => {
+    if (initialSearch !== undefined) {
+      setSearch(initialSearch);
+      setPage(1);
+    }
+  }, [initialSearch]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -422,7 +430,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                             title="Liberar garantía (dejar disponibles los bienes/lotes)"
                             className="p-1 text-amber-700 hover:text-amber-900 hover:bg-amber-50 rounded transition cursor-pointer"
                           >
-                            <Unlock className="w-3.5 h-3.5" />
+                            <Unlink2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => {
