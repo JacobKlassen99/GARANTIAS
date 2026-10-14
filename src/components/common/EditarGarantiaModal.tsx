@@ -28,7 +28,7 @@ import {
   getBienes,
 } from '../../services/backend';
 import { ClientSearchAutocomplete } from './ClientSearchAutocomplete';
-import { formatHectareas } from '../../utils/textSearch';
+import { formatHectareas, formatPropietario, parseDecimal } from '../../utils/textSearch';
 
 interface EditarGarantiaModalProps {
   idGarantia: string;
@@ -51,7 +51,6 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
   const [fecha, setFecha] = useState('');
   const [fechaVencimiento, setFechaVencimiento] = useState('');
   const [modalidad, setModalidad] = useState<'Simple' | 'Múltiple'>('Simple');
-  const [selectedPropietario, setSelectedPropietario] = useState<Cliente | null>(null);
   const [selectedPrestatario, setSelectedPrestatario] = useState<Cliente | null>(null);
   const [garantiaConTipo, setGarantiaConTipo] = useState<TipoGarantiaCon>('Farmer Rechnung');
   const [selectedGarantiaCliente, setSelectedGarantiaCliente] = useState<Cliente | null>(null);
@@ -69,7 +68,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
   // Modales secundarios de selección
   const [isAddingLote, setIsAddingLote] = useState(false);
   const [isAddingBien, setIsAddingBien] = useState(false);
-  const [tempLoteHa, setTempLoteHa] = useState<number>(0);
+  const [tempLoteHa, setTempLoteHa] = useState<number | string>(0);
   const [tempLoteTarget, setTempLoteTarget] = useState<Lote | null>(null);
   const [tempLoteGarantiaCon, setTempLoteGarantiaCon] = useState<TipoGarantiaCon>('Farmer Rechnung');
   const [tempLoteCliente, setTempLoteCliente] = useState<Cliente | null>(null);
@@ -94,9 +93,13 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
 
         if (!isMounted) return;
 
-        setClientesList(Array.isArray(cRes?.data) ? cRes.data : []);
-        setAvailableLotes(Array.isArray(lRes?.data) ? lRes.data : []);
-        setAvailableBienes(Array.isArray(bRes?.data) ? bRes.data : []);
+        const cList = Array.isArray(cRes?.data) ? cRes.data : [];
+        const lList = Array.isArray(lRes?.data) ? lRes.data : [];
+        const bList = Array.isArray(bRes?.data) ? bRes.data : [];
+
+        setClientesList(cList);
+        setAvailableLotes(lList);
+        setAvailableBienes(bList);
 
         if (garantiaFull) {
           setNumeroSolicitud(garantiaFull.numeroSolicitud || '');
@@ -105,11 +108,6 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
             garantiaFull.fechaVencimiento ? garantiaFull.fechaVencimiento.split('T')[0] : ''
           );
           setModalidad(garantiaFull.modalidad === 'Múltiple' ? 'Múltiple' : 'Simple');
-          setSelectedPropietario({
-            cuenta: garantiaFull.cuentaPropietario,
-            nombre: garantiaFull.propietario,
-            ci: '',
-          });
           setSelectedPrestatario({
             cuenta: garantiaFull.cuentaPrestatario,
             nombre: garantiaFull.prestatario,
@@ -127,8 +125,28 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
           }
 
           setObservacion(garantiaFull.observacion || '');
-          setLotes(Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : []);
-          setBienes(Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : []);
+
+          const rawLotes = Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : [];
+          const lotesEnriquecidos = rawLotes.map((lote) => {
+            const masterLote = lList.find((l) => String(l.idLote) === String(lote.idLote));
+            return {
+              ...lote,
+              propietario: lote.propietario || masterLote?.propietario || '',
+              cuentaPropietario: lote.cuentaPropietario ?? masterLote?.cuentaPropietario ?? '',
+            };
+          });
+          setLotes(lotesEnriquecidos);
+
+          const rawBienes = Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : [];
+          const bienesEnriquecidos = rawBienes.map((bien) => {
+            const masterBien = bList.find((b) => String(b.idBien) === String(bien.idBien));
+            return {
+              ...bien,
+              propietario: bien.propietario || masterBien?.propietario || '',
+              cuentaPropietario: bien.cuentaPropietario ?? masterBien?.cuentaPropietario ?? '',
+            };
+          });
+          setBienes(bienesEnriquecidos);
         } else {
           setErrorMessage('No se pudo encontrar la garantía seleccionada.');
         }
@@ -158,7 +176,8 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
 
   const handleConfirmAddLote = () => {
     if (!tempLoteTarget) return;
-    if (tempLoteHa <= 0) {
+    const haNum = parseDecimal(tempLoteHa);
+    if (haNum <= 0) {
       alert('Las hectáreas a poner en garantía deben ser mayores a 0.');
       return;
     }
@@ -181,7 +200,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         idGarantia,
         idLote: tempLoteTarget.idLote,
         numeroLote: tempLoteTarget.numeroLote,
-        hectareas: tempLoteHa,
+        hectareas: haNum,
         propietario: tempLoteTarget.propietario,
         cuentaPropietario: tempLoteTarget.cuentaPropietario,
         ubicacion: tempLoteTarget.ubicacion,
@@ -251,10 +270,6 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
       setErrorMessage('Debe especificar el Prestatario.');
       return;
     }
-    if (!selectedPropietario) {
-      setErrorMessage('Debe especificar el Propietario.');
-      return;
-    }
     if (lotes.length === 0 && bienes.length === 0) {
       setErrorMessage('Debe contar con al menos un lote o bien en garantía.');
       return;
@@ -277,6 +292,48 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         ? 'Terreno'
         : 'Bien';
 
+    // Obtener consolidado de propietarios únicos a partir de los lotes y bienes
+    const ownersMap = new Map<string, { cuenta: string | number; nombre: string }>();
+
+    for (const l of lotes) {
+      const pNombre = (l.propietario || '').trim();
+      const pCuenta =
+        l.cuentaPropietario !== undefined && l.cuentaPropietario !== null
+          ? String(l.cuentaPropietario).trim()
+          : '';
+      if (pNombre || pCuenta) {
+        const key = pCuenta ? `cta:${pCuenta}` : `nom:${pNombre}`;
+        if (!ownersMap.has(key)) {
+          ownersMap.set(key, { cuenta: l.cuentaPropietario ?? '', nombre: pNombre });
+        }
+      }
+    }
+
+    for (const b of bienes) {
+      const pNombre = (b.propietario || '').trim();
+      const pCuenta =
+        b.cuentaPropietario !== undefined && b.cuentaPropietario !== null
+          ? String(b.cuentaPropietario).trim()
+          : '';
+      if (pNombre || pCuenta) {
+        const key = pCuenta ? `cta:${pCuenta}` : `nom:${pNombre}`;
+        if (!ownersMap.has(key)) {
+          ownersMap.set(key, { cuenta: b.cuentaPropietario ?? '', nombre: pNombre });
+        }
+      }
+    }
+
+    const distinctOwners = Array.from(ownersMap.values());
+    let mainPropNombre = '—';
+    let mainPropCuenta: string | number = '';
+    if (distinctOwners.length === 1) {
+      mainPropNombre = distinctOwners[0].nombre;
+      mainPropCuenta = distinctOwners[0].cuenta;
+    } else if (distinctOwners.length > 1) {
+      mainPropNombre = distinctOwners.map((o) => o.nombre || `Cuenta ${o.cuenta}`).join(' / ');
+      mainPropCuenta = distinctOwners.map((o) => o.cuenta).filter((c) => c !== '').join(' / ');
+    }
+
     setIsSaving(true);
     try {
       const payload: Partial<Garantia> = {
@@ -284,8 +341,8 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         numeroSolicitud: numeroSolicitud.trim(),
         fecha,
         fechaVencimiento: fechaVencimiento || '',
-        cuentaPropietario: selectedPropietario.cuenta,
-        propietario: selectedPropietario.nombre,
+        cuentaPropietario: mainPropCuenta,
+        propietario: mainPropNombre,
         cuentaPrestatario: selectedPrestatario.cuenta,
         prestatario: selectedPrestatario.nombre,
         garantiaConTipo: modalidad === 'Múltiple' ? 'Cliente' : garantiaConTipo,
@@ -436,16 +493,8 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                 </div>
               </div>
 
-              {/* Propietario y Prestatario */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                <ClientSearchAutocomplete
-                  label="Propietario del Bien o Parcela"
-                  clientesList={clientesList}
-                  selectedCuenta={selectedPropietario?.cuenta}
-                  onSelect={setSelectedPropietario}
-                  required
-                />
-
+              {/* Prestatario */}
+              <div className="pt-2">
                 <ClientSearchAutocomplete
                   label="Prestatario (Cuenta en Garantía)"
                   clientesList={clientesList}
@@ -533,8 +582,8 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
                     <tr>
-                      <th className="p-1.5 border-r border-slate-200">Item</th>
-                      <th className="p-1.5 border-r border-slate-200">Tipo</th>
+                      <th className="p-1.5 border-r border-slate-200">Bien / Lote</th>
+                      <th className="p-1.5 border-r border-slate-200">Propietario</th>
                       <th className="p-1.5 border-r border-slate-200 text-right">Cantidad / Valor</th>
                       <th className="p-1.5 border-r border-slate-200">Garantía con</th>
                       <th className="p-1.5 text-center w-16">Acción</th>
@@ -546,17 +595,17 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                         <td className="p-1.5 border-r border-slate-200 font-mono font-bold text-emerald-950">
                           Lote {lote.numeroLote}
                         </td>
-                        <td className="p-1.5 border-r border-slate-200 text-slate-600">
-                          Terreno / Parcela
+                        <td className="p-1.5 border-r border-slate-200 text-slate-800 font-medium">
+                          {formatPropietario(lote.propietario, lote.cuentaPropietario)}
                         </td>
                         <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-emerald-900">
                           <input
                             type="number"
-                            step="0.01"
-                            min="0.01"
+                            step="any"
+                            min="0"
                             value={lote.hectareas}
                             onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
+                              const val = parseDecimal(e.target.value);
                               setLotes((prev) =>
                                 prev.map((item) =>
                                   item.idLote === lote.idLote ? { ...item, hectareas: val } : item
@@ -636,10 +685,10 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                     {bienes.map((bien) => (
                       <tr key={`b-${bien.idBien}`} className="hover:bg-slate-50">
                         <td className="p-1.5 border-r border-slate-200 font-mono font-bold text-blue-950">
-                          {bien.numeroPoliza} — {bien.tipoBien}
+                          {bien.numeroPoliza} — {bien.descripcion || bien.marca || bien.tipoBien}
                         </td>
-                        <td className="p-1.5 border-r border-slate-200 text-slate-600">
-                          {bien.descripcion || bien.marca || 'Bien mueble'}
+                        <td className="p-1.5 border-r border-slate-200 text-slate-800 font-medium">
+                          {formatPropietario(bien.propietario, bien.cuentaPropietario)}
                         </td>
                         <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-emerald-950">
                           $us.{' '}
@@ -855,10 +904,10 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                       </label>
                       <input
                         type="number"
-                        step="0.01"
-                        min="0.01"
+                        step="any"
+                        min="0"
                         value={tempLoteHa}
-                        onChange={(e) => setTempLoteHa(parseFloat(e.target.value) || 0)}
+                        onChange={(e) => setTempLoteHa(e.target.value)}
                         className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded font-mono font-bold text-xs"
                       />
                     </div>
@@ -915,7 +964,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                   <button
                     type="button"
                     onClick={handleConfirmAddLote}
-                    disabled={!tempLoteTarget || tempLoteHa <= 0}
+                    disabled={!tempLoteTarget || parseDecimal(tempLoteHa) <= 0}
                     className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded disabled:opacity-50"
                   >
                     Confirmar Lote

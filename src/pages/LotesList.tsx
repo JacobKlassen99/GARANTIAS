@@ -26,7 +26,7 @@ import {
 import { ClientSearchAutocomplete } from '../components/common/ClientSearchAutocomplete';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { EmptyState } from '../components/common/EmptyState';
-import { formatHectareas, formatFecha, getTodayIso } from '../utils/textSearch';
+import { formatHectareas, formatFecha, getTodayIso, parseDecimal } from '../utils/textSearch';
 
 interface LotesListProps {
   initialOpenNew?: boolean;
@@ -231,8 +231,8 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
       setFormError('Debe seleccionar un propietario registrado en la hoja clientes.');
       return;
     }
-    const haNum = parseFloat(hectareas);
-    if (isNaN(haNum) || haNum <= 0) {
+    const haNum = parseDecimal(hectareas);
+    if (haNum <= 0) {
       setFormError('La superficie en hectáreas debe ser un número mayor a 0.');
       return;
     }
@@ -707,11 +707,11 @@ export const LotesList: React.FC<LotesListProps> = ({ initialOpenNew = false, on
                   </label>
                   <input
                     type="number"
-                    step="0.01"
-                    min="0.01"
+                    step="any"
+                    min="0"
                     value={hectareas}
                     onChange={(e) => setHectareas(e.target.value)}
-                    placeholder="Ej: 44.47"
+                    placeholder="Ej: 44.4723"
                     disabled={isSaving}
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700 font-mono"
                     required

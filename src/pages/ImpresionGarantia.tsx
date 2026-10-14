@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Printer, Download, X, ShieldCheck, AlertCircle } from 'lucide-react';
 import { Garantia } from '../types';
-import { formatFecha, formatHectareas } from '../utils/textSearch';
+import { formatFecha, formatHectareas, formatPropietario } from '../utils/textSearch';
 
 interface ImpresionGarantiaProps {
   garantia: Garantia;
@@ -30,6 +30,40 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
     : 0;
 
   const documentTitle = hasLotes && !hasBienes ? 'GARANTÍA DE PARCELAS' : 'GARANTÍA DE BIENES';
+
+  // Consolidar propietarios únicos
+  const distinctOwnersMap = new Map<string, { cuenta: string | number; nombre: string }>();
+  if (Array.isArray(garantia.lotes)) {
+    garantia.lotes.forEach((l) => {
+      const pNombre = (l.propietario || '').trim();
+      const pCuenta =
+        l.cuentaPropietario !== undefined && l.cuentaPropietario !== null
+          ? String(l.cuentaPropietario).trim()
+          : '';
+      if (pNombre || pCuenta) {
+        const key = pCuenta ? `cta:${pCuenta}` : `nom:${pNombre}`;
+        if (!distinctOwnersMap.has(key)) {
+          distinctOwnersMap.set(key, { cuenta: l.cuentaPropietario ?? '', nombre: pNombre });
+        }
+      }
+    });
+  }
+  if (Array.isArray(garantia.bienes)) {
+    garantia.bienes.forEach((b) => {
+      const pNombre = (b.propietario || '').trim();
+      const pCuenta =
+        b.cuentaPropietario !== undefined && b.cuentaPropietario !== null
+          ? String(b.cuentaPropietario).trim()
+          : '';
+      if (pNombre || pCuenta) {
+        const key = pCuenta ? `cta:${pCuenta}` : `nom:${pNombre}`;
+        if (!distinctOwnersMap.has(key)) {
+          distinctOwnersMap.set(key, { cuenta: b.cuentaPropietario ?? '', nombre: pNombre });
+        }
+      }
+    });
+  }
+  const distinctOwners = Array.from(distinctOwnersMap.values());
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto">
@@ -116,24 +150,53 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
             {/* SECCIÓN 1: DATOS DEL PROPIETARIO */}
             <div className="border border-slate-400 rounded p-3 bg-slate-50/40">
               <div className="font-bold uppercase text-[11px] tracking-wider text-slate-800 border-b border-slate-300 pb-1 mb-2">
-                1. Datos del Propietario del Bien o Parcela
+                {distinctOwners.length > 1
+                  ? '1. Datos de los Propietarios de los Bienes o Parcelas (Operación Múltiple)'
+                  : '1. Datos del Propietario del Bien o Parcela'}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-slate-600">Número de Cuenta: </span>
-                  <strong className="font-mono text-slate-900">{garantia.cuentaPropietario}</strong>
+              {distinctOwners.length > 1 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  {distinctOwners.map((owner, idx) => (
+                    <div key={idx} className="p-2 bg-white border border-slate-200 rounded">
+                      <div>
+                        <span className="text-slate-600">Propietario {idx + 1}: </span>
+                        <strong className="text-slate-900">{owner.nombre}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-600">Número de Cuenta: </span>
+                        <strong className="font-mono text-slate-900">{owner.cuenta || '—'}</strong>
+                      </div>
+                    </div>
+                  ))}
+                  {identificacionTemporal && (
+                    <div className="col-span-1 sm:col-span-2 text-slate-800 pt-1">
+                      <span className="text-slate-600">Identificación / Documento: </span>
+                      <strong className="font-mono">{identificacionTemporal}</strong>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <span className="text-slate-600">Nombre Completo: </span>
-                  <strong className="text-slate-900">{garantia.propietario}</strong>
-                </div>
-                {identificacionTemporal && (
-                  <div className="col-span-1 sm:col-span-2 text-slate-800">
-                    <span className="text-slate-600">Identificación / Documento: </span>
-                    <strong className="font-mono">{identificacionTemporal}</strong>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-slate-600">Número de Cuenta: </span>
+                    <strong className="font-mono text-slate-900">
+                      {distinctOwners[0]?.cuenta || garantia.cuentaPropietario || '—'}
+                    </strong>
                   </div>
-                )}
-              </div>
+                  <div>
+                    <span className="text-slate-600">Nombre Completo: </span>
+                    <strong className="text-slate-900">
+                      {distinctOwners[0]?.nombre || garantia.propietario || '—'}
+                    </strong>
+                  </div>
+                  {identificacionTemporal && (
+                    <div className="col-span-1 sm:col-span-2 text-slate-800">
+                      <span className="text-slate-600">Identificación / Documento: </span>
+                      <strong className="font-mono">{identificacionTemporal}</strong>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* SECCIÓN 2: BIENES Y LOTES AFECTADOS */}
@@ -155,6 +218,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
                     <thead className="bg-slate-100 font-bold border-b border-slate-300">
                       <tr>
                         <th className="p-1.5 border-r border-slate-300">N.º Parcela</th>
+                        <th className="p-1.5 border-r border-slate-300">Propietario</th>
                         <th className="p-1.5 border-r border-slate-300 text-right">Superficie</th>
                         <th className="p-1.5 border-r border-slate-300">Ubicación</th>
                         <th className="p-1.5 border-r border-slate-300">Encargado</th>
@@ -166,6 +230,9 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
                         <tr key={i}>
                           <td className="p-1.5 font-bold font-mono border-r border-slate-200">
                             {lote.numeroLote}
+                          </td>
+                          <td className="p-1.5 border-r border-slate-200 text-slate-800 font-medium">
+                            {formatPropietario(lote.propietario, lote.cuentaPropietario)}
                           </td>
                           <td className="p-1.5 font-mono text-right border-r border-slate-200 font-semibold">
                             {formatHectareas(lote.hectareas)}
@@ -195,6 +262,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
                     <thead className="bg-slate-100 font-bold border-b border-slate-300">
                       <tr>
                         <th className="p-1.5 border-r border-slate-300">Maquinaria / Bien</th>
+                        <th className="p-1.5 border-r border-slate-300">Propietario</th>
                         <th className="p-1.5 border-r border-slate-300">N.º Póliza</th>
                         <th className="p-1.5 border-r border-slate-300 text-right">Valor en Garantía ($us.)</th>
                         <th className="p-1.5 border-r border-slate-300">Garantía con</th>
@@ -209,6 +277,9 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
                             <td className="p-1.5 border-r border-slate-200 font-medium">
                               {bien.tipoBien} {bien.descripcion ? `- ${bien.descripcion}` : ''}{' '}
                               {bien.marca ? `(${bien.marca})` : ''}
+                            </td>
+                            <td className="p-1.5 border-r border-slate-200 text-slate-800 font-medium">
+                              {formatPropietario(bien.propietario, bien.cuentaPropietario)}
                             </td>
                             <td className="p-1.5 font-bold font-mono border-r border-slate-200">
                               {bien.numeroPoliza}
@@ -280,20 +351,36 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({ garantia, 
 
             {/* TEXTO INSTITUCIONAL FORMAL */}
             <div className="p-3 border border-slate-300 rounded text-[11px] text-justify leading-relaxed text-slate-700 font-serif">
-              Por el presente documento, el Propietario declara y certifica que los bienes y/o parcelas descritos precedentemente quedan gravados en calidad de garantía institucional en favor de <strong>{garantia.garantiaConNombre}</strong> para respaldar las obligaciones financieras y comerciales contraídas por el Prestatario con Cuenta en Garantía N.º <strong>{garantia.cuentaPrestatario}</strong>. Los bienes gravados no podrán ser enajenados, cedidos ni transferidos sin previa autorización formal y liberación de gravamen emitida por la Administración de la Colonia Chihuahua.
+              Por el presente documento, {distinctOwners.length > 1 ? 'los Propietarios declaran y certifican' : 'el Propietario declara y certifica'} que los bienes y/o parcelas descritos precedentemente quedan gravados en calidad de garantía institucional en favor de <strong>{garantia.garantiaConNombre}</strong> para respaldar las obligaciones financieras y comerciales contraídas por el Prestatario con Cuenta en Garantía N.º <strong>{garantia.cuentaPrestatario}</strong>. Los bienes gravados no podrán ser enajenados, cedidos ni transferidos sin previa autorización formal y liberación de gravamen emitida por la Administración de la Colonia Chihuahua.
             </div>
 
             {/* SECCIÓN DE FIRMAS */}
-            <div className="pt-16 pb-4 grid grid-cols-2 gap-8 text-center text-xs">
-              <div className="border-t border-slate-800 pt-2">
-                <div className="font-bold uppercase tracking-wider text-slate-900">
-                  FIRMA DEL PROPIETARIO
+            <div className="pt-16 pb-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8 text-center text-xs">
+              {distinctOwners.length > 1 ? (
+                distinctOwners.map((owner, idx) => (
+                  <div key={idx} className="border-t border-slate-800 pt-2">
+                    <div className="font-bold uppercase tracking-wider text-slate-900">
+                      FIRMA PROPIETARIO {idx + 1}
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-1 font-mono">
+                      {owner.nombre}
+                    </div>
+                    <div className="text-[10px] text-slate-400">Cuenta: {owner.cuenta || '—'}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="border-t border-slate-800 pt-2">
+                  <div className="font-bold uppercase tracking-wider text-slate-900">
+                    FIRMA DEL PROPIETARIO
+                  </div>
+                  <div className="text-[11px] text-slate-600 mt-1 font-mono">
+                    {distinctOwners[0]?.nombre || garantia.propietario}
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    Cuenta: {distinctOwners[0]?.cuenta || garantia.cuentaPropietario}
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                  {garantia.propietario}
-                </div>
-                <div className="text-[10px] text-slate-400">Cuenta: {garantia.cuentaPropietario}</div>
-              </div>
+              )}
 
               <div className="border-t border-slate-800 pt-2">
                 <div className="font-bold uppercase tracking-wider text-slate-900">

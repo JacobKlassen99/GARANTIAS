@@ -41,7 +41,7 @@ import {
   getFromMemoryCache,
 } from '../services/backend';
 import { ClientSearchAutocomplete } from '../components/common/ClientSearchAutocomplete';
-import { getTodayIso, formatHectareas } from '../utils/textSearch';
+import { getTodayIso, formatHectareas, formatPropietario, parseDecimal } from '../utils/textSearch';
 import { ImpresionGarantia } from './ImpresionGarantia';
 import { NavSection } from '../components/layout/Sidebar';
 
@@ -59,8 +59,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   const [fecha, setFecha] = useState<string>(getTodayIso());
   const [fechaVencimiento, setFechaVencimiento] = useState<string>('');
 
-  // Personas
-  const [selectedPropietario, setSelectedPropietario] = useState<Cliente | null>(null);
+  // Titular principal de la operación (Prestatario / Deudor)
   const [selectedPrestatario, setSelectedPrestatario] = useState<Cliente | null>(null);
 
   // Garantía con (Principal / Para modalidad Simple)
@@ -85,7 +84,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
 
   // Estado temporal al agregar Lote
   const [targetLote, setTargetLote] = useState<Lote | null>(null);
-  const [targetLoteHa, setTargetLoteHa] = useState<number>(0);
+  const [targetLoteHa, setTargetLoteHa] = useState<number | string>(0);
   const [targetLoteGarantiaCon, setTargetLoteGarantiaCon] = useState<TipoGarantiaCon>('Farmer Rechnung');
   const [targetLoteCliente, setTargetLoteCliente] = useState<Cliente | null>(null);
 
@@ -342,7 +341,8 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
 
   const handleConfirmAddLote = () => {
     if (!targetLote) return;
-    if (targetLoteHa <= 0) {
+    const haNum = parseDecimal(targetLoteHa);
+    if (haNum <= 0) {
       alert('Las hectáreas a poner en garantía deben ser mayores a 0.');
       return;
     }
@@ -357,7 +357,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         ? targetLote.hectareasDisponibles
         : targetLote.hectareas;
 
-    if (targetLoteHa > disp && disp > 0) {
+    if (haNum > disp + 0.000001 && disp > 0) {
       alert(`No puede solicitar más de las hectáreas disponibles (${disp} ha).`);
       return;
     }
@@ -373,28 +373,12 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         ? targetLoteCliente.cuenta
         : undefined;
 
-    // Si aún no se seleccionó propietario general, autocompletar con el del primer lote
-    if (!selectedPropietario) {
-      const propFromLote = clientesList.find(
-        (c) => String(c.cuenta) === String(targetLote.cuentaPropietario)
-      );
-      if (propFromLote) {
-        setSelectedPropietario(propFromLote);
-      } else {
-        setSelectedPropietario({
-          cuenta: targetLote.cuentaPropietario,
-          nombre: targetLote.propietario,
-          ci: '',
-        });
-      }
-    }
-
     setSelectedLotes((prev) => [
       ...prev.filter((l) => l.idLote !== targetLote.idLote),
       {
         idLote: targetLote.idLote,
         numeroLote: targetLote.numeroLote,
-        hectareas: targetLoteHa,
+        hectareas: haNum,
         hectareasTotales: targetLote.hectareas,
         hectareasDisponibles: disp,
         propietario: targetLote.propietario,
@@ -449,22 +433,6 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         ? targetBienCliente.cuenta
         : undefined;
 
-    // Si aún no se seleccionó propietario general, autocompletar con el del bien
-    if (!selectedPropietario) {
-      const propFromBien = clientesList.find(
-        (c) => String(c.cuenta) === String(targetBien.cuentaPropietario)
-      );
-      if (propFromBien) {
-        setSelectedPropietario(propFromBien);
-      } else {
-        setSelectedPropietario({
-          cuenta: targetBien.cuentaPropietario,
-          nombre: targetBien.propietario,
-          ci: '',
-        });
-      }
-    }
-
     setSelectedBienes((prev) => [
       ...prev.filter((b) => b.idBien !== targetBien.idBien),
       {
@@ -495,19 +463,58 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
     setSelectedBienes((prev) => prev.filter((b) => b.idBien !== idBien));
   };
 
+  // Obtener consolidado de propietarios únicos a partir de los lotes y bienes seleccionados
+  const getPropietariosResumen = () => {
+    const ownersMap = new Map<string, { cuenta: string | number; nombre: string }>();
+
+    for (const l of selectedLotes) {
+      const pNombre = (l.propietario || '').trim();
+      const pCuenta =
+        l.cuentaPropietario !== undefined && l.cuentaPropietario !== null
+          ? String(l.cuentaPropietario).trim()
+          : '';
+      if (pNombre || pCuenta) {
+        const key = pCuenta ? `cta:${pCuenta}` : `nom:${pNombre}`;
+        if (!ownersMap.has(key)) {
+          ownersMap.set(key, { cuenta: l.cuentaPropietario ?? '', nombre: pNombre });
+        }
+      }
+    }
+
+    for (const b of selectedBienes) {
+      const pNombre = (b.propietario || '').trim();
+      const pCuenta =
+        b.cuentaPropietario !== undefined && b.cuentaPropietario !== null
+          ? String(b.cuentaPropietario).trim()
+          : '';
+      if (pNombre || pCuenta) {
+        const key = pCuenta ? `cta:${pCuenta}` : `nom:${pNombre}`;
+        if (!ownersMap.has(key)) {
+          ownersMap.set(key, { cuenta: b.cuentaPropietario ?? '', nombre: pNombre });
+        }
+      }
+    }
+
+    const owners = Array.from(ownersMap.values());
+    if (owners.length === 0) {
+      return { propietario: '—', cuentaPropietario: '' };
+    }
+    if (owners.length === 1) {
+      return {
+        propietario: owners[0].nombre,
+        cuentaPropietario: owners[0].cuenta,
+      };
+    }
+    // Si son múltiples propietarios distintos, consolidar sin inventar ni poner al prestatario
+    return {
+      propietario: owners.map((o) => o.nombre || `Cuenta ${o.cuenta}`).join(' / '),
+      cuentaPropietario: owners.map((o) => o.cuenta).filter((c) => c !== '').join(' / '),
+    };
+  };
+
   // Preparar objeto de garantía en memoria (para guardar o para imprimir sin guardar)
   const buildGarantiaPayload = (): Partial<Garantia> => {
-    const mainPropNombre =
-      selectedPropietario?.nombre ||
-      selectedLotes[0]?.propietario ||
-      selectedBienes[0]?.propietario ||
-      '—';
-
-    const mainPropCuenta =
-      selectedPropietario?.cuenta ||
-      selectedLotes[0]?.cuentaPropietario ||
-      selectedBienes[0]?.cuentaPropietario ||
-      '—';
+    const { propietario: mainPropNombre, cuentaPropietario: mainPropCuenta } = getPropietariosResumen();
 
     const gNombre =
       garantiaConTipo === 'Cliente' && selectedGarantiaCliente
@@ -850,39 +857,24 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
           </div>
         </div>
 
-        {/* SECCIÓN 2: INTERVINIENTES (PROPIETARIO Y PRESTATARIO) */}
+        {/* SECCIÓN 2: TITULARES DE LA OPERACIÓN (PRESTATARIO) */}
         <div className="bg-white p-4 rounded border border-slate-200 shadow-2xs space-y-3">
           <div className="flex items-center gap-2 pb-2 border-b border-slate-100 text-xs font-bold uppercase tracking-wider text-slate-700">
             <User className="w-4 h-4 text-emerald-800" />
             <span>SECCIÓN 2 — Titulares de la Operación</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
             {/* Prestatario: persona que hace/solicita el préstamo */}
-            <div>
-              <ClientSearchAutocomplete
-                label="Prestatario (Cuenta en Garantía)"
-                placeholder="Buscar prestatario por cuenta o nombre..."
-                clientesList={clientesList}
-                selectedCuenta={selectedPrestatario?.cuenta}
-                onSelect={setSelectedPrestatario}
-                required
-                helperText="Persona que solicita el préstamo y compromete el bien en garantía."
-              />
-            </div>
-
-            {/* Propietario del bien/lote */}
-            <div>
-              <ClientSearchAutocomplete
-                label="Propietario del Bien o Parcela"
-                placeholder="Buscar dueño por cuenta o nombre..."
-                clientesList={clientesList}
-                selectedCuenta={selectedPropietario?.cuenta}
-                onSelect={setSelectedPropietario}
-                required
-                helperText="Dueño legal del bien (puede ser el prestatario o un garante)."
-              />
-            </div>
+            <ClientSearchAutocomplete
+              label="Prestatario (Cuenta en Garantía)"
+              placeholder="Buscar prestatario por cuenta o nombre..."
+              clientesList={clientesList}
+              selectedCuenta={selectedPrestatario?.cuenta}
+              onSelect={setSelectedPrestatario}
+              required
+              helperText="Persona que solicita el préstamo y sobre cuya cuenta se emite la garantía."
+            />
           </div>
         </div>
 
@@ -1008,7 +1000,7 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
               <thead className="bg-slate-100 text-slate-700 border-b border-slate-300 select-none">
                 <tr>
                   <th className="py-1.5 px-3 font-bold border-r border-slate-200">Bien / Lote</th>
-                  <th className="py-1.5 px-3 font-bold border-r border-slate-200">Tipo</th>
+                  <th className="py-1.5 px-3 font-bold border-r border-slate-200">Propietario</th>
                   <th className="py-1.5 px-3 font-bold border-r border-slate-200 text-right">Cantidad / Valor</th>
                   <th className="py-1.5 px-3 font-bold border-r border-slate-200">Garantía Con</th>
                   <th className="py-1.5 px-3 font-bold text-center w-20">Acción</th>
@@ -1024,8 +1016,8 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                         <span className="text-[10px] text-slate-400 font-sans ml-1">({lote.ubicacion})</span>
                       )}
                     </td>
-                    <td className="py-1.5 px-3 border-r border-slate-200 text-slate-700">
-                      Terreno / Parcela
+                    <td className="py-1.5 px-3 border-r border-slate-200 text-slate-800 font-medium">
+                      {formatPropietario(lote.propietario, lote.cuentaPropietario)}
                     </td>
                     <td className="py-1.5 px-3 border-r border-slate-200 text-right font-mono font-bold text-emerald-900">
                       {formatHectareas(lote.hectareas)}
@@ -1057,8 +1049,8 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                           <span className="text-[10px] text-slate-400 font-mono ml-1">[{bien.placa}]</span>
                         )}
                       </td>
-                      <td className="py-1.5 px-3 border-r border-slate-200 text-slate-700">
-                        {bien.tipoBien}
+                      <td className="py-1.5 px-3 border-r border-slate-200 text-slate-800 font-medium">
+                        {formatPropietario(bien.propietario, bien.cuentaPropietario)}
                       </td>
                       <td className="py-1.5 px-3 border-r border-slate-200 text-right font-mono font-bold text-emerald-950">
                         $us. {valUSD.toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1351,10 +1343,10 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                     </label>
                     <input
                       type="number"
-                      step="0.01"
-                      min="0.01"
+                      step="any"
+                      min="0"
                       value={targetLoteHa}
-                      onChange={(e) => setTargetLoteHa(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => setTargetLoteHa(e.target.value)}
                       className="w-full px-2.5 py-1.5 bg-white border border-emerald-300 rounded font-mono font-bold text-xs"
                     />
                   </div>

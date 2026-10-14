@@ -47,11 +47,44 @@ export function formatClienteLabel(cuenta: string | number, nombre: string): str
 }
 
 /**
- * Formato numérico para hectáreas con dos decimales estándar
+ * Formatea la etiqueta de propietario para terrenos y bienes:
+ * "Nombre (Cuenta XXX)" según requisito oficial.
+ * Ej: "Klas Rempel (Cuenta 100)"
+ */
+export function formatPropietario(propietario?: string, cuenta?: string | number): string {
+  const nombre = (propietario || '').trim();
+  const cta =
+    cuenta !== undefined && cuenta !== null && String(cuenta).trim() !== ''
+      ? String(cuenta).trim()
+      : '';
+
+  if (nombre && cta) {
+    return `${nombre} (Cuenta ${cta})`;
+  }
+  if (nombre) return nombre;
+  if (cta) return `Cuenta ${cta}`;
+  return '—';
+}
+
+/**
+ * Formato numérico para hectáreas con hasta 6 decimales reales sin ceros innecesarios al final
+ * Ejemplos: 11.4336 -> "11,4336 ha", 50 -> "50 ha", 0.000125 -> "0,000125 ha"
  */
 export function formatHectareas(num: number | null | undefined): string {
   if (num === null || num === undefined || isNaN(Number(num))) return '—';
-  return `${Number(num).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ha`;
+  const val = Number(num);
+  return `${val.toLocaleString('es-BO', { minimumFractionDigits: 0, maximumFractionDigits: 6 })} ha`;
+}
+
+/**
+ * Parsea un valor numérico decimal admitiendo coma y punto, manteniendo hasta 6 decimales
+ */
+export function parseDecimal(val: any): number {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const str = String(val).trim().replace(',', '.');
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
 }
 
 /**

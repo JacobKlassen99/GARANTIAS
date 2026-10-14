@@ -30,7 +30,7 @@ import {
   RelacionBienGarantia,
   EstadoRegistro,
 } from '../types';
-import { calcularEstadoVencimiento } from '../utils/textSearch';
+import { calcularEstadoVencimiento, parseDecimal } from '../utils/textSearch';
 import {
   getFromMemoryCache,
   setToMemoryCache,
@@ -425,13 +425,19 @@ export function normalizarLote(item: any): Lote {
       ? item['Hectáreas']
       : typeof item?.['Hectáreas Totales'] === 'number'
       ? item['Hectáreas Totales']
-      : Number(item?.hectareas) || 0;
+      : typeof item?.hectareas === 'number'
+      ? item.hectareas
+      : parseDecimal(item?.['Hectáreas'] ?? item?.['Hectáreas Totales'] ?? item?.hectareas);
 
   const backendHaEnGarantia =
     typeof item?.['Hectáreas en Garantía'] === 'number'
       ? item['Hectáreas en Garantía']
       : typeof item?.hectareasEnGarantia === 'number'
       ? item.hectareasEnGarantia
+      : item?.['Hectáreas en Garantía'] !== undefined
+      ? parseDecimal(item['Hectáreas en Garantía'])
+      : item?.hectareasEnGarantia !== undefined
+      ? parseDecimal(item.hectareasEnGarantia)
       : undefined;
 
   let hectareasEnGarantia = 0;
@@ -446,7 +452,7 @@ export function normalizarLote(item: any): Lote {
           const matchNum = gl.numeroLote && numeroLote && String(gl.numeroLote).trim().toLowerCase() === String(numeroLote).trim().toLowerCase();
           if (matchId || matchNum) {
             foundInGuarantees = true;
-            hectareasEnGarantia += Number(gl.hectareas) || 0;
+            hectareasEnGarantia += parseDecimal(gl.hectareas);
           }
         }
       }
@@ -463,14 +469,21 @@ export function normalizarLote(item: any): Lote {
     }
   }
 
-  hectareasEnGarantia = Math.min(hectareasTotales, Math.max(0, hectareasEnGarantia));
+  // Redondear a 6 decimales para evitar artefactos de punto flotante
+  hectareasEnGarantia = Math.round(Math.min(hectareasTotales, Math.max(0, hectareasEnGarantia)) * 1e6) / 1e6;
 
-  const hectareasDisponibles =
+  const rawDisp =
     typeof item?.['Hectáreas Disponibles'] === 'number' && !foundInGuarantees
       ? item['Hectáreas Disponibles']
       : typeof item?.hectareasDisponibles === 'number' && !foundInGuarantees
       ? item.hectareasDisponibles
-      : Math.max(0, hectareasTotales - hectareasEnGarantia);
+      : item?.['Hectáreas Disponibles'] !== undefined && !foundInGuarantees
+      ? parseDecimal(item['Hectáreas Disponibles'])
+      : item?.hectareasDisponibles !== undefined && !foundInGuarantees
+      ? parseDecimal(item.hectareasDisponibles)
+      : Math.round(Math.max(0, hectareasTotales - hectareasEnGarantia) * 1e6) / 1e6;
+
+  const hectareasDisponibles = Math.round(Math.max(0, rawDisp) * 1e6) / 1e6;
 
   const enGarantiaFinal = enGarantiaCalculado || hectareasEnGarantia > 0;
 
@@ -1006,7 +1019,7 @@ export async function crearLote(lote: Partial<Lote>): Promise<any> {
     propietario: lote.propietario ? lote.propietario.trim() : '',
     cuentaEncargado: lote.cuentaEncargado || '',
     encargado: lote.encargado ? lote.encargado.trim() : '',
-    hectareas: Number(lote.hectareas) || 0,
+    hectareas: parseDecimal(lote.hectareas),
     ubicacion: lote.ubicacion ? lote.ubicacion.trim() : '',
     estado: lote.estado || 'Disponible',
     motivoBloqueo: lote.motivoBloqueo ? lote.motivoBloqueo.trim() : '',
@@ -1025,7 +1038,7 @@ export async function editarLote(lote: Partial<Lote>): Promise<any> {
     propietario: lote.propietario ? lote.propietario.trim() : '',
     cuentaEncargado: lote.cuentaEncargado || '',
     encargado: lote.encargado ? lote.encargado.trim() : '',
-    hectareas: Number(lote.hectareas) || 0,
+    hectareas: parseDecimal(lote.hectareas),
     ubicacion: lote.ubicacion ? lote.ubicacion.trim() : '',
     estado: lote.estado || 'Disponible',
     motivoBloqueo: lote.motivoBloqueo ? lote.motivoBloqueo.trim() : '',
@@ -1259,72 +1272,184 @@ export async function obtenerGarantias(forceRefresh: boolean = false): Promise<G
   return paginated.data;
 }
 
-export async function obtenerGarantiaCompleta(idGarantia: string): Promise<Garantia | null> {
+export async function obtenerGarantiaCompleta(
+  idGarantia: string,
+  forceRefresh: boolean = false
+): Promise<Garantia | null> {
   if (!idGarantia) return null;
+
+  const cacheKey = `garantia-completa:${idGarantia}`;
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<Garantia>('garantias', cacheKey);
+    if (cached) return cached;
+  }
+
   const res = await callAppsScript<any>('obtenerGarantiaCompleta', { idGarantia });
   if (!res || !res.garantia) return null;
 
   const base = normalizarGarantia(res.garantia);
   base.modalidad = res.garantia?.['Modalidad'] || res.garantia?.modalidad || 'Simple';
 
-  // Mapear lotes relacionados
+  // Mapear lotes relacionados desde garantia_lotes y lotes
   const lotesRelacionados: GarantiaLoteRelacion[] = [];
   if (Array.isArray(res.lotes)) {
     for (const item of res.lotes) {
-      if (item && item.lote) {
-        lotesRelacionados.push({
-          idGarantia: item.relacion?.['ID Garantía'] || item.relacion?.idGarantia || base.idGarantia,
-          idLote: item.lote?.['ID Lote'] || item.lote?.idLote || item.relacion?.['ID Lote'] || '',
-          numeroLote: item.lote?.['N.º de Lote'] || item.lote?.numeroLote || '',
-          hectareas:
-            typeof item.relacion?.['Hectáreas'] === 'number'
-              ? item.relacion['Hectáreas']
-              : typeof item.lote?.['Hectáreas'] === 'number'
-              ? item.lote['Hectáreas']
-              : Number(item.relacion?.hectareas || item.lote?.hectareas) || 0,
-          hectareasTotales: typeof item.lote?.['Hectáreas'] === 'number' ? item.lote['Hectáreas'] : undefined,
-          propietario: item.lote?.['Propietario'] || item.lote?.propietario || '',
-          cuentaPropietario: item.lote?.['Cuenta Propietario'] ?? item.lote?.cuentaPropietario ?? '',
-          ubicacion: item.lote?.['Ubicación'] || item.lote?.ubicacion || '',
-          encargado: item.lote?.['Encargado'] || item.lote?.encargado || '',
-          garantiaConTipo: item.relacion?.['Garantía con Tipo'] || item.relacion?.garantiaConTipo || base.garantiaConTipo,
-          garantiaConCuenta: item.relacion?.['Garantía con Cuenta'] ?? item.relacion?.garantiaConCuenta ?? base.garantiaConCuenta,
-          garantiaConNombre: item.relacion?.['Garantía con Nombre'] || item.relacion?.garantiaConNombre || base.garantiaConNombre,
-        });
-      }
+      if (!item) continue;
+      const rel = item.relacion || item;
+      const loteData = item.lote || (item.relacion ? undefined : item);
+
+      const idLote =
+        loteData?.['ID Lote'] ||
+        loteData?.idLote ||
+        rel?.['ID Lote'] ||
+        rel?.idLote ||
+        item['ID Lote'] ||
+        item.idLote ||
+        '';
+
+      const numeroLote =
+        loteData?.['N.º de Lote'] ||
+        loteData?.numeroLote ||
+        rel?.['N.º de Lote'] ||
+        rel?.numeroLote ||
+        item['N.º de Lote'] ||
+        item.numeroLote ||
+        '';
+
+      const haRelacion = rel?.['Hectáreas'] ?? rel?.hectareas;
+      const haLote = loteData?.['Hectáreas'] ?? loteData?.hectareas;
+      const haParsed =
+        typeof haRelacion === 'number'
+          ? haRelacion
+          : typeof haLote === 'number'
+          ? haLote
+          : parseDecimal(haRelacion ?? haLote ?? item['Hectáreas'] ?? item.hectareas);
+
+      const haTotales =
+        typeof haLote === 'number'
+          ? haLote
+          : haLote !== undefined
+          ? parseDecimal(haLote)
+          : undefined;
+
+      const prop =
+        loteData?.['Propietario'] ||
+        loteData?.propietario ||
+        rel?.['Propietario'] ||
+        rel?.propietario ||
+        item.propietario ||
+        '';
+
+      const ctaProp =
+        loteData?.['Cuenta Propietario'] ??
+        loteData?.cuentaPropietario ??
+        rel?.['Cuenta Propietario'] ??
+        rel?.cuentaPropietario ??
+        item.cuentaPropietario ??
+        '';
+
+      lotesRelacionados.push({
+        idGarantia: rel?.['ID Garantía'] || rel?.idGarantia || base.idGarantia,
+        idLote,
+        numeroLote,
+        hectareas: haParsed,
+        hectareasTotales: haTotales,
+        propietario: prop,
+        cuentaPropietario: ctaProp,
+        ubicacion: loteData?.['Ubicación'] || loteData?.ubicacion || rel?.['Ubicación'] || rel?.ubicacion || '',
+        encargado: loteData?.['Encargado'] || loteData?.encargado || '',
+        garantiaConTipo: rel?.['Garantía con Tipo'] || rel?.garantiaConTipo || base.garantiaConTipo,
+        garantiaConCuenta: rel?.['Garantía con Cuenta'] ?? rel?.garantiaConCuenta ?? base.garantiaConCuenta,
+        garantiaConNombre: rel?.['Garantía con Nombre'] || rel?.garantiaConNombre || base.garantiaConNombre,
+      });
     }
   }
 
-  // Mapear bienes relacionados
+  // Mapear bienes relacionados desde garantia_bienes y bienes
   const bienesRelacionados: GarantiaBienRelacion[] = [];
   if (Array.isArray(res.bienes)) {
     for (const item of res.bienes) {
-      if (item && item.bien) {
-        const valUSD =
-          typeof item.relacion?.['Valor en Garantía ($us.)'] === 'number'
-            ? item.relacion['Valor en Garantía ($us.)']
-            : typeof item.relacion?.valorGarantiaUSD === 'number'
-            ? item.relacion.valorGarantiaUSD
-            : Number(item.relacion?.['Valor en Garantía ($us.)']) || 0;
+      if (!item) continue;
+      const rel = item.relacion || item;
+      const bienData = item.bien || (item.relacion ? undefined : item);
 
-        bienesRelacionados.push({
-          idGarantia: item.relacion?.['ID Garantía'] || item.relacion?.idGarantia || base.idGarantia,
-          idBien: item.bien?.['ID Bien'] || item.bien?.idBien || item.relacion?.['ID Bien'] || '',
-          numeroPoliza: item.bien?.['N.º Póliza'] || item.bien?.numeroPoliza || '',
-          tipoBien: item.bien?.['Tipo de Bien'] || item.bien?.tipoBien || '',
-          descripcion: item.bien?.['Descripción'] || item.bien?.descripcion || '',
-          marca: item.bien?.['Marca'] || item.bien?.marca || '',
-          modelo: item.bien?.['Modelo'] || item.bien?.modelo || '',
-          placa: item.bien?.['Placa'] || item.bien?.placa || '',
-          propietario: item.bien?.['Propietario'] || item.bien?.propietario || '',
-          cuentaPropietario: item.bien?.['Cuenta Propietario'] ?? item.bien?.cuentaPropietario ?? '',
-          ubicacion: item.bien?.['Ubicación'] || item.bien?.ubicacion || '',
-          valorGarantiaUSD: valUSD,
-          garantiaConTipo: item.relacion?.['Garantía con Tipo'] || item.relacion?.garantiaConTipo || base.garantiaConTipo,
-          garantiaConCuenta: item.relacion?.['Garantía con Cuenta'] ?? item.relacion?.garantiaConCuenta ?? base.garantiaConCuenta,
-          garantiaConNombre: item.relacion?.['Garantía con Nombre'] || item.relacion?.garantiaConNombre || base.garantiaConNombre,
-        });
-      }
+      const idBien =
+        bienData?.['ID Bien'] ||
+        bienData?.idBien ||
+        rel?.['ID Bien'] ||
+        rel?.idBien ||
+        item['ID Bien'] ||
+        item.idBien ||
+        '';
+
+      const numeroPoliza =
+        bienData?.['N.º Póliza'] ||
+        bienData?.numeroPoliza ||
+        rel?.['N.º Póliza'] ||
+        rel?.numeroPoliza ||
+        item['N.º Póliza'] ||
+        item.numeroPoliza ||
+        '';
+
+      const tipoBien =
+        bienData?.['Tipo de Bien'] ||
+        bienData?.tipoBien ||
+        rel?.['Tipo de Bien'] ||
+        rel?.tipoBien ||
+        item['Tipo de Bien'] ||
+        item.tipoBien ||
+        '';
+
+      const descripcion =
+        bienData?.['Descripción'] || bienData?.descripcion || rel?.['Descripción'] || rel?.descripcion || '';
+      const marca = bienData?.['Marca'] || bienData?.marca || rel?.['Marca'] || rel?.marca || '';
+      const modelo = bienData?.['Modelo'] || bienData?.modelo || rel?.['Modelo'] || rel?.modelo || '';
+      const placa = bienData?.['Placa'] || bienData?.placa || rel?.['Placa'] || rel?.placa || '';
+
+      const valUSD =
+        typeof rel?.['Valor en Garantía ($us.)'] === 'number'
+          ? rel['Valor en Garantía ($us.)']
+          : typeof rel?.valorGarantiaUSD === 'number'
+          ? rel.valorGarantiaUSD
+          : typeof rel?.valorEnGarantia === 'number'
+          ? rel.valorEnGarantia
+          : typeof bienData?.['Valor en Garantía ($us.)'] === 'number'
+          ? bienData['Valor en Garantía ($us.)']
+          : Number(rel?.['Valor en Garantía ($us.)'] || rel?.valorGarantiaUSD || rel?.valorEnGarantia || bienData?.['Valor en Garantía ($us.)'] || 0) || 0;
+
+      const prop =
+        bienData?.['Propietario'] ||
+        bienData?.propietario ||
+        rel?.['Propietario'] ||
+        rel?.propietario ||
+        item.propietario ||
+        '';
+
+      const ctaProp =
+        bienData?.['Cuenta Propietario'] ??
+        bienData?.cuentaPropietario ??
+        rel?.['Cuenta Propietario'] ??
+        rel?.cuentaPropietario ??
+        item.cuentaPropietario ??
+        '';
+
+      bienesRelacionados.push({
+        idGarantia: rel?.['ID Garantía'] || rel?.idGarantia || base.idGarantia,
+        idBien,
+        numeroPoliza,
+        tipoBien,
+        descripcion,
+        marca,
+        modelo,
+        placa,
+        propietario: prop,
+        cuentaPropietario: ctaProp,
+        ubicacion: bienData?.['Ubicación'] || bienData?.ubicacion || rel?.['Ubicación'] || rel?.ubicacion || '',
+        valorGarantiaUSD: valUSD,
+        garantiaConTipo: rel?.['Garantía con Tipo'] || rel?.garantiaConTipo || base.garantiaConTipo,
+        garantiaConCuenta: rel?.['Garantía con Cuenta'] ?? rel?.garantiaConCuenta ?? base.garantiaConCuenta,
+        garantiaConNombre: rel?.['Garantía con Nombre'] || rel?.garantiaConNombre || base.garantiaConNombre,
+      });
     }
   }
 
@@ -1333,6 +1458,7 @@ export async function obtenerGarantiaCompleta(idGarantia: string): Promise<Garan
   base.cantidadLotes = lotesRelacionados.length;
   base.cantidadBienes = bienesRelacionados.length;
 
+  setToMemoryCache('garantias', base, cacheKey);
   return base;
 }
 
@@ -1379,7 +1505,9 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
       ? garantia.lotes.map((l) => ({
           idLote: l.idLote,
           numeroLote: l.numeroLote,
-          hectareas: typeof l.hectareas === 'number' ? l.hectareas : Number(l.hectareas) || 0,
+          hectareas: parseDecimal(l.hectareas),
+          cuentaPropietario: l.cuentaPropietario || '',
+          propietario: l.propietario || '',
           garantiaConTipo: l.garantiaConTipo || garantia.garantiaConTipo || '',
           garantiaConCuenta: l.garantiaConCuenta || garantia.garantiaConCuenta || '',
           garantiaConNombre: l.garantiaConNombre || garantia.garantiaConNombre || '',
@@ -1392,6 +1520,8 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
           tipoBien: b.tipoBien,
           valorGarantiaUSD: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
           valorEnGarantia: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
+          cuentaPropietario: b.cuentaPropietario || '',
+          propietario: b.propietario || '',
           garantiaConTipo: b.garantiaConTipo || garantia.garantiaConTipo || '',
           garantiaConCuenta: b.garantiaConCuenta || garantia.garantiaConCuenta || '',
           garantiaConNombre: b.garantiaConNombre || garantia.garantiaConNombre || '',
@@ -1422,7 +1552,9 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
       ? garantia.lotes.map((l) => ({
           idLote: l.idLote,
           numeroLote: l.numeroLote,
-          hectareas: typeof l.hectareas === 'number' ? l.hectareas : Number(l.hectareas) || 0,
+          hectareas: parseDecimal(l.hectareas),
+          cuentaPropietario: l.cuentaPropietario || '',
+          propietario: l.propietario || '',
           garantiaConTipo: l.garantiaConTipo || garantia.garantiaConTipo || '',
           garantiaConCuenta: l.garantiaConCuenta || garantia.garantiaConCuenta || '',
           garantiaConNombre: l.garantiaConNombre || garantia.garantiaConNombre || '',
@@ -1435,6 +1567,8 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
           tipoBien: b.tipoBien,
           valorGarantiaUSD: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
           valorEnGarantia: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
+          cuentaPropietario: b.cuentaPropietario || '',
+          propietario: b.propietario || '',
           garantiaConTipo: b.garantiaConTipo || garantia.garantiaConTipo || '',
           garantiaConCuenta: b.garantiaConCuenta || garantia.garantiaConCuenta || '',
           garantiaConNombre: b.garantiaConNombre || garantia.garantiaConNombre || '',
@@ -1451,11 +1585,25 @@ export async function liberarGarantia(idGarantia: string): Promise<any> {
   return result;
 }
 
+export async function eliminarGarantia(idGarantia: string, password: string): Promise<any> {
+  if (!idGarantia) throw new Error('El ID de la garantía es requerido.');
+  if (!password || !password.trim()) {
+    throw new Error('La contraseña de administrador es requerida.');
+  }
+  const result = await callAppsScript('eliminarGarantia', {
+    idGarantia: idGarantia.trim(),
+    password: password.trim(),
+  });
+  invalidateMemoryCache(['garantias', 'lotes', 'bienes', 'dashboard', 'reportes', 'client-detail']);
+  return result;
+}
+
 // Aliases para retrocompatibilidad
 export const getGarantias = listarGarantias;
 export const getGarantiaById = obtenerGarantiaCompleta;
 export const saveGarantia = async (garantia: Partial<Garantia>, isEdit: boolean) =>
   isEdit ? editarGarantia(garantia) : crearGarantia(garantia);
+export const deleteGarantia = eliminarGarantia;
 
 export async function getNextSolicitudNumber(): Promise<string> {
   try {

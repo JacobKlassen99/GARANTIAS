@@ -7,6 +7,7 @@ import {
   Printer,
   Edit2,
   Unlock,
+  Trash2,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
@@ -14,14 +15,17 @@ import {
   Building2,
   Layers,
   X,
+  CheckCircle2,
 } from 'lucide-react';
 import { Garantia, QueryParams } from '../types';
-import { getGarantias, liberarGarantia } from '../services/backend';
+import { getGarantias, liberarGarantia, eliminarGarantia } from '../services/backend';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { EmptyState } from '../components/common/EmptyState';
 import { ImpresionGarantia } from './ImpresionGarantia';
 import { EditarGarantiaModal } from '../components/common/EditarGarantiaModal';
-import { formatFecha, formatHectareas } from '../utils/textSearch';
+import { VerBienesLotesModal } from '../components/common/VerBienesLotesModal';
+import { EliminarGarantiaModal } from '../components/common/EliminarGarantiaModal';
+import { formatFecha, formatHectareas, formatPropietario } from '../utils/textSearch';
 import { NavSection } from '../components/layout/Sidebar';
 
 interface GarantiasListProps {
@@ -48,9 +52,20 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
   // Garantía para ver detalle
   const [garantiaParaVer, setGarantiaParaVer] = useState<Garantia | null>(null);
 
+  // Garantía para ver bienes y lotes
+  const [garantiaParaBienesLotes, setGarantiaParaBienesLotes] = useState<Garantia | null>(null);
+
   // Modal Confirmar Liberación
   const [garantiaToLiberar, setGarantiaToLiberar] = useState<Garantia | null>(null);
   const [isLiberando, setIsLiberando] = useState(false);
+
+  // Modal Confirmar Eliminación con Contraseña
+  const [garantiaToDelete, setGarantiaToDelete] = useState<Garantia | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
+
+  // Mensaje de éxito temporal
+  const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
 
   const loadData = async (forceRefresh: boolean = false) => {
     if (garantias.length === 0 && !hasLoadedOnce) {
@@ -97,12 +112,36 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
     setIsLiberando(true);
     try {
       await liberarGarantia(garantiaToLiberar.idGarantia);
+      const numSol = garantiaToLiberar.numeroSolicitud;
       setGarantiaToLiberar(null);
+      setActionSuccessMessage(`Garantía N.º ${numSol} liberada con éxito.`);
+      setTimeout(() => setActionSuccessMessage(null), 3500);
       loadData(true);
     } catch (err: any) {
       alert(err.message || 'No se pudo liberar la garantía.');
     } finally {
       setIsLiberando(false);
+    }
+  };
+
+  const handleConfirmDelete = async (password: string) => {
+    if (!garantiaToDelete) return;
+    setIsDeleting(true);
+    setDeleteErrorMessage(null);
+    try {
+      await eliminarGarantia(garantiaToDelete.idGarantia, password);
+      const numSol = garantiaToDelete.numeroSolicitud;
+      setGarantiaToDelete(null);
+      setDeleteErrorMessage(null);
+      setActionSuccessMessage(`Garantía N.º ${numSol} eliminada definitivamente.`);
+      setTimeout(() => setActionSuccessMessage(null), 3500);
+      loadData(true);
+    } catch (err: any) {
+      setDeleteErrorMessage(
+        err?.message || 'Error al eliminar la garantía. Verifique la contraseña de administrador.'
+      );
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -223,6 +262,21 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
         </div>
       </div>
 
+      {actionSuccessMessage && (
+        <div className="p-2.5 bg-emerald-50 border border-emerald-300 rounded flex items-center justify-between text-xs text-emerald-900 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span className="font-semibold">{actionSuccessMessage}</span>
+          </div>
+          <button
+            onClick={() => setActionSuccessMessage(null)}
+            className="text-emerald-700 hover:text-emerald-900 font-bold p-1"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {backendMessage && garantias.length > 0 && (
         <div className="p-2.5 bg-amber-50 border border-amber-200 rounded flex items-center justify-between text-xs text-amber-800">
           <div className="flex items-center gap-2">
@@ -251,14 +305,13 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Prestatario (Cuenta en G.)</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Garantía Con</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 w-28">Tipo</th>
-                <th className="py-1.5 px-3 font-bold border-r border-slate-200">Bienes / Lotes Respaldando</th>
-                <th className="py-1.5 px-3 font-bold text-center w-32">Acciones</th>
+                <th className="py-1.5 px-3 font-bold text-center w-44">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal">
               {isLoading && !hasLoadedOnce ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                  <td colSpan={8} className="py-12 text-center text-xs text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <RefreshCw className="w-5 h-5 animate-spin text-emerald-800" />
                       <span className="font-semibold text-slate-700">Cargando garantías...</span>
@@ -268,7 +321,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 </tr>
               ) : backendMessage && garantias.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-red-600">
+                  <td colSpan={8} className="py-12 text-center text-xs text-red-600">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="w-6 h-6 text-red-500" />
                       <span className="font-semibold text-slate-800">No se pudo cargar la información.</span>
@@ -283,9 +336,6 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 </tr>
               ) : Array.isArray(garantias) && garantias.length > 0 ? (
                 garantias.map((garantia) => {
-                  const cantLotes = garantia.lotes?.length || 0;
-                  const cantBienes = garantia.bienes?.length || 0;
-
                   return (
                     <tr
                       key={garantia.idGarantia}
@@ -314,10 +364,12 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                         )}
                       </td>
                       <td className="py-1.5 px-3 border-r border-slate-100">
-                        <div className="font-semibold text-slate-800">{garantia.propietario}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          Cta: {garantia.cuentaPropietario}
-                        </div>
+                        <div className="font-semibold text-slate-800">{garantia.propietario || '—'}</div>
+                        {garantia.cuentaPropietario && (
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            Cta: {garantia.cuentaPropietario}
+                          </div>
+                        )}
                       </td>
                       <td className="py-1.5 px-3 border-r border-slate-100">
                         <div className="font-semibold text-slate-800">{garantia.prestatario}</div>
@@ -334,34 +386,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                         </span>
                       </td>
 
-                      {/* Bienes / Lotes */}
-                      <td className="py-1.5 px-3 border-r border-slate-100">
-                        <div className="flex flex-wrap gap-1 text-[11px]">
-                          {garantia.lotes?.map((l, idx) => (
-                            <span
-                              key={idx}
-                              className="px-1.5 py-0.2 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded font-mono text-[10px]"
-                              title={`Lote ${l.numeroLote} - ${formatHectareas(l.hectareas)}`}
-                            >
-                              Lote {l.numeroLote}
-                            </span>
-                          ))}
-                          {garantia.bienes?.map((b, idx) => (
-                            <span
-                              key={idx}
-                              className="px-1.5 py-0.2 bg-blue-100 text-blue-900 border border-blue-300 rounded font-mono text-[10px]"
-                              title={`${b.tipoBien} - Póliza ${b.numeroPoliza}`}
-                            >
-                              {b.numeroPoliza}
-                            </span>
-                          ))}
-                          {cantLotes === 0 && cantBienes === 0 && (
-                            <span className="text-slate-400 italic text-[10px]">Sin items vinculados</span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Acciones: Ver, Imprimir, Liberar */}
+                      {/* Acciones: Ver detalles, Ver bienes/lotes, Editar, Imprimir, Liberar */}
                       <td className="py-1.5 px-3 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button
@@ -370,6 +395,13 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                             className="p-1 text-slate-600 hover:text-emerald-800 hover:bg-slate-100 rounded transition cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setGarantiaParaBienesLotes(garantia)}
+                            title="Ver bienes y lotes respaldando"
+                            className="p-1 text-emerald-700 hover:text-emerald-950 hover:bg-emerald-50 rounded transition cursor-pointer"
+                          >
+                            <Layers className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => setGarantiaToEdit(garantia)}
@@ -392,6 +424,16 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                           >
                             <Unlock className="w-3.5 h-3.5" />
                           </button>
+                          <button
+                            onClick={() => {
+                              setDeleteErrorMessage(null);
+                              setGarantiaToDelete(garantia);
+                            }}
+                            title="Eliminar garantía definitivamente"
+                            className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded transition cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -399,7 +441,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-slate-500">
+                  <td colSpan={8} className="py-12 text-center text-xs text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-1.5 max-w-sm mx-auto">
                       <FileCheck2 className="w-8 h-8 text-slate-300 stroke-[1.5]" />
                       <span className="font-semibold text-slate-700">
@@ -495,7 +537,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
                 </div>
                 <div>
                   <span className="text-slate-500">Propietario:</span>{' '}
-                  <strong>{garantiaParaVer.propietario}</strong> ({garantiaParaVer.cuentaPropietario})
+                  <strong>{formatPropietario(garantiaParaVer.propietario, garantiaParaVer.cuentaPropietario)}</strong>
                 </div>
                 <div>
                   <span className="text-slate-500">Prestatario:</span>{' '}
@@ -538,6 +580,15 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
         </div>
       )}
 
+      {/* MODAL VER BIENES Y LOTES (RÁPIDO Y DIRECTO) */}
+      {garantiaParaBienesLotes && (
+        <VerBienesLotesModal
+          idGarantia={garantiaParaBienesLotes.idGarantia}
+          numeroSolicitud={garantiaParaBienesLotes.numeroSolicitud}
+          onClose={() => setGarantiaParaBienesLotes(null)}
+        />
+      )}
+
       {/* VISTA DE IMPRESIÓN OFICIAL */}
       {garantiaParaImprimir && (
         <ImpresionGarantia
@@ -568,6 +619,21 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate }) => {
         isLoading={isLiberando}
         onCancel={() => setGarantiaToLiberar(null)}
         onConfirm={handleConfirmLiberar}
+      />
+
+      {/* CONFIRMAR ELIMINACIÓN PERMANENTE CON CONTRASEÑA */}
+      <EliminarGarantiaModal
+        isOpen={!!garantiaToDelete}
+        garantia={garantiaToDelete}
+        isLoading={isDeleting}
+        errorMessage={deleteErrorMessage}
+        onCancel={() => {
+          if (!isDeleting) {
+            setGarantiaToDelete(null);
+            setDeleteErrorMessage(null);
+          }
+        }}
+        onConfirm={handleConfirmDelete}
       />
     </div>
   );
