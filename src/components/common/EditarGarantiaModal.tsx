@@ -584,7 +584,8 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
       mainPropCuenta = distinctOwners[0].cuenta;
     } else if (distinctOwners.length > 1) {
       mainPropNombre = distinctOwners.map((o) => o.nombre || `Cuenta ${o.cuenta}`).join(' / ');
-      mainPropCuenta = distinctOwners.map((o) => o.cuenta).filter((c) => c !== '').join(' / ');
+      const firstValidOwner = distinctOwners.find((o) => o.cuenta !== undefined && o.cuenta !== null && String(o.cuenta).trim() !== '');
+      mainPropCuenta = firstValidOwner ? firstValidOwner.cuenta : (distinctOwners[0]?.cuenta || selectedPrestatario?.cuenta || '');
     }
 
     setIsSaving(true);

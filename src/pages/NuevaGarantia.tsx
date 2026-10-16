@@ -508,10 +508,13 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
         cuentaPropietario: owners[0].cuenta,
       };
     }
-    // Si son múltiples propietarios distintos, consolidar sin inventar ni poner al prestatario
+    // Si son múltiples propietarios distintos:
+    // Para la cabecera visual se listan los nombres unidos por " / "
+    // Para la cuentaPropietario de la cabecera se envía una CUENTA REAL y EXISTENTE (la del propietario del primer ítem)
+    const firstOwnerWithAccount = owners.find((o) => o.cuenta !== undefined && o.cuenta !== null && String(o.cuenta).trim() !== '');
     return {
       propietario: owners.map((o) => o.nombre || `Cuenta ${o.cuenta}`).join(' / '),
-      cuentaPropietario: owners.map((o) => o.cuenta).filter((c) => c !== '').join(' / '),
+      cuentaPropietario: firstOwnerWithAccount ? firstOwnerWithAccount.cuenta : (owners[0]?.cuenta || selectedPrestatario?.cuenta || ''),
     };
   };
 

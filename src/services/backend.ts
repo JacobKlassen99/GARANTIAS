@@ -1914,6 +1914,38 @@ export async function obtenerGarantiaCompleta(
   return base;
 }
 
+function resolveHeaderCuentaPropietario(
+  cuentaProp: string | number | undefined,
+  lotes?: Array<{ cuentaPropietario?: string | number }>,
+  bienes?: Array<{ cuentaPropietario?: string | number }>,
+  fallbackPrestatario?: string | number
+): string | number {
+  let raw = String(cuentaProp ?? '').trim();
+  if (raw.includes('/') || raw.includes(' ')) {
+    const parts = raw.split(/[\/\s]+/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 0) {
+      raw = parts[0];
+    }
+  }
+  if (raw) return raw;
+
+  if (Array.isArray(lotes)) {
+    const foundLote = lotes.find((l) => l.cuentaPropietario !== undefined && l.cuentaPropietario !== null && String(l.cuentaPropietario).trim() !== '');
+    if (foundLote && foundLote.cuentaPropietario !== undefined) {
+      return String(foundLote.cuentaPropietario).trim();
+    }
+  }
+
+  if (Array.isArray(bienes)) {
+    const foundBien = bienes.find((b) => b.cuentaPropietario !== undefined && b.cuentaPropietario !== null && String(b.cuentaPropietario).trim() !== '');
+    if (foundBien && foundBien.cuentaPropietario !== undefined) {
+      return String(foundBien.cuentaPropietario).trim();
+    }
+  }
+
+  return fallbackPrestatario !== undefined ? String(fallbackPrestatario).trim() : '';
+}
+
 export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
   // Verificar disponibilidad actual en el servidor antes de enviar
   try {
@@ -1994,11 +2026,18 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
     mainGarantiaConNombre = 'Farmer Rechnung';
   }
 
+  const safeCuentaPropietario = resolveHeaderCuentaPropietario(
+    garantia.cuentaPropietario,
+    garantia.lotes,
+    garantia.bienes,
+    garantia.cuentaPrestatario
+  );
+
   const result = await callAppsScript('crearGarantia', {
     numeroSolicitud: garantia.numeroSolicitud || '',
     fecha: garantia.fecha,
     fechaVencimiento: garantia.fechaVencimiento || '',
-    cuentaPropietario: garantia.cuentaPropietario,
+    cuentaPropietario: safeCuentaPropietario,
     propietario: garantia.propietario,
     cuentaPrestatario: garantia.cuentaPrestatario,
     prestatario: garantia.prestatario,
@@ -2178,12 +2217,19 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
     mainGarantiaConNombre = 'Farmer Rechnung';
   }
 
+  const safeCuentaPropietario = resolveHeaderCuentaPropietario(
+    garantia.cuentaPropietario,
+    garantia.lotes,
+    garantia.bienes,
+    garantia.cuentaPrestatario
+  );
+
   const result = await callAppsScript('editarGarantia', {
     idGarantia: garantia.idGarantia,
     numeroSolicitud: garantia.numeroSolicitud || '',
     fecha: garantia.fecha,
     fechaVencimiento: garantia.fechaVencimiento || '',
-    cuentaPropietario: garantia.cuentaPropietario,
+    cuentaPropietario: safeCuentaPropietario,
     propietario: garantia.propietario,
     cuentaPrestatario: garantia.cuentaPrestatario,
     prestatario: garantia.prestatario,

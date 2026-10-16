@@ -339,13 +339,13 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
                 (id) => String(id) === String(lote.idLote)
               );
               const noDisp = disp <= 0;
-              const isDisabled = isBlocked || isInactive || isAlreadySelected || noDisp;
+              const isDisabled = isBlocked || isInactive || noDisp;
 
               let reason = '';
-              if (isAlreadySelected) reason = 'Ya añadido en este formulario';
-              else if (isBlocked) reason = `Bloqueado administrativamente (${lote.motivoBloqueo || 'Sin motivo'})`;
+              if (isBlocked) reason = `Bloqueado administrativamente (${lote.motivoBloqueo || 'Sin motivo'})`;
               else if (isInactive) reason = 'Lote inactivo';
               else if (noDisp) reason = 'Sin hectáreas disponibles (100% en garantía)';
+              else if (isAlreadySelected) reason = 'Disponible para otro acreedor';
 
               return (
                 <div
