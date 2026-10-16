@@ -155,159 +155,22 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
     loadReferences();
   }, []);
 
-  // Manejador apertura y búsqueda de lotes
+  // Asegurar la precarga de listas base al abrir modales si aún no estuvieran en memoria
   useEffect(() => {
-    if (isLoteModalOpen) {
-      setLoteSearchError(false);
-      if (availableLotes.length === 0) {
-        setIsSearchingLotes(true);
-        obtenerLotes()
-          .then((lotes) => {
-            setAvailableLotes(lotes);
-          })
-          .catch(() => {
-            setLoteSearchError(true);
-          })
-          .finally(() => {
-            setIsSearchingLotes(false);
-          });
-      } else {
-        setIsSearchingLotes(false);
-      }
+    if (isLoteModalOpen && availableLotes.length === 0) {
+      obtenerLotes()
+        .then((lotes) => setAvailableLotes(lotes))
+        .catch(() => {});
     }
-  }, [isLoteModalOpen]);
+  }, [isLoteModalOpen, availableLotes.length]);
 
   useEffect(() => {
-    if (!isLoteModalOpen) return;
-    const clean = loteSearchTerm.trim();
-    if (!clean) {
-      setLoteSearchResults(null);
-      setIsSearchingLotes(false);
-      setLoteSearchError(false);
-      return;
+    if (isBienModalOpen && availableBienes.length === 0) {
+      obtenerBienes()
+        .then((bienes) => setAvailableBienes(bienes))
+        .catch(() => {});
     }
-
-    // 1. Revisar caché en memoria de búsquedas
-    const searchKey = `search:${clean.toLowerCase()}`;
-    const cached = getFromMemoryCache<Lote[]>('lotes', searchKey);
-    if (cached) {
-      setLoteSearchResults(cached);
-      setIsSearchingLotes(false);
-      setLoteSearchError(false);
-      return;
-    }
-
-    // 2. Si ya hay lotes en memoria, filtrar inmediatamente
-    if (availableLotes.length > 0) {
-      const lower = clean.toLowerCase();
-      const localMatches = availableLotes.filter(
-        (l) =>
-          (l.numeroLote || '').toLowerCase().includes(lower) ||
-          (l.propietario || '').toLowerCase().includes(lower) ||
-          String(l.cuentaPropietario || '').includes(lower) ||
-          (l.ubicacion || '').toLowerCase().includes(lower)
-      );
-      if (localMatches.length > 0) {
-        setLoteSearchResults(localMatches);
-      }
-    }
-
-    if (loteDebounceRef.current) clearTimeout(loteDebounceRef.current);
-    loteDebounceRef.current = setTimeout(async () => {
-      setIsSearchingLotes(true);
-      setLoteSearchError(false);
-      try {
-        const results = await buscarLotes(clean);
-        setLoteSearchResults(results);
-      } catch {
-        setLoteSearchError(true);
-      } finally {
-        setIsSearchingLotes(false);
-      }
-    }, 350);
-
-    return () => {
-      if (loteDebounceRef.current) clearTimeout(loteDebounceRef.current);
-    };
-  }, [loteSearchTerm, isLoteModalOpen]);
-
-  // Manejador apertura y búsqueda de bienes
-  useEffect(() => {
-    if (isBienModalOpen) {
-      setBienSearchError(false);
-      if (availableBienes.length === 0) {
-        setIsSearchingBienes(true);
-        obtenerBienes()
-          .then((bienes) => {
-            setAvailableBienes(bienes);
-          })
-          .catch(() => {
-            setBienSearchError(true);
-          })
-          .finally(() => {
-            setIsSearchingBienes(false);
-          });
-      } else {
-        setIsSearchingBienes(false);
-      }
-    }
-  }, [isBienModalOpen]);
-
-  useEffect(() => {
-    if (!isBienModalOpen) return;
-    const clean = bienSearchTerm.trim();
-    if (!clean) {
-      setBienSearchResults(null);
-      setIsSearchingBienes(false);
-      setBienSearchError(false);
-      return;
-    }
-
-    // 1. Revisar caché en memoria de búsquedas
-    const searchKey = `search:${clean.toLowerCase()}`;
-    const cached = getFromMemoryCache<Bien[]>('bienes', searchKey);
-    if (cached) {
-      setBienSearchResults(cached);
-      setIsSearchingBienes(false);
-      setBienSearchError(false);
-      return;
-    }
-
-    // 2. Si ya hay bienes en memoria, filtrar inmediatamente
-    if (availableBienes.length > 0) {
-      const lower = clean.toLowerCase();
-      const localMatches = availableBienes.filter(
-        (b) =>
-          (b.numeroPoliza || '').toLowerCase().includes(lower) ||
-          (b.propietario || '').toLowerCase().includes(lower) ||
-          String(b.cuentaPropietario || '').includes(lower) ||
-          (b.descripcion || '').toLowerCase().includes(lower) ||
-          (b.marca || '').toLowerCase().includes(lower) ||
-          (b.placa || '').toLowerCase().includes(lower)
-      );
-      if (localMatches.length > 0) {
-        setBienSearchResults(localMatches);
-      }
-    }
-
-    if (bienDebounceRef.current) clearTimeout(bienDebounceRef.current);
-    bienDebounceRef.current = setTimeout(async () => {
-      setIsSearchingBienes(true);
-      setBienSearchError(false);
-      try {
-        const results = await buscarBienes(clean);
-        setBienSearchResults(results);
-      } catch {
-        setBienSearchError(true);
-      } finally {
-        setIsSearchingBienes(false);
-      }
-    }, 350);
-
-    return () => {
-      if (bienDebounceRef.current) clearTimeout(bienDebounceRef.current);
-    };
-  }, [bienSearchTerm, isBienModalOpen]);
+  }, [isBienModalOpen, availableBienes.length]);
 
   // Totales separados
   const totalHectareas = selectedLotes.reduce((acc, l) => acc + (Number(l.hectareas) || 0), 0);

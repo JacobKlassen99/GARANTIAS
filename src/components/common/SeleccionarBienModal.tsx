@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Search, RefreshCw, AlertCircle, Tractor } from 'lucide-react';
 import { Bien, Cliente, GarantiaBienRelacion, TipoGarantiaCon } from '../../types';
-import { obtenerBienes, buscarBienes } from '../../services/backend';
-import { getFromMemoryCache } from '../../services/dataCache';
+import { obtenerBienes } from '../../services/backend';
 import { ClientSearchAutocomplete } from './ClientSearchAutocomplete';
 
 export interface SeleccionarBienModalProps {
@@ -19,14 +18,52 @@ export interface SeleccionarBienModalProps {
   availableBienes?: Bien[];
 }
 
+/**
+ * Función ultra-segura para comparar un bien con el término de búsqueda.
+ * Tolera acentos, mayúsculas/minúsculas, campos nulos/undefined o valores numéricos.
+ */
+function matchesBienQuery(bien: Bien, query: string): boolean {
+  if (!query || !query.trim()) return true;
+  if (!bien) return false;
+
+  const cleanQuery = query
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+  const searchFields = [
+    bien.numeroPoliza,
+    bien.descripcion,
+    bien.tipoBien,
+    bien.marca,
+    bien.modelo,
+    bien.placa,
+    bien.propietario,
+    bien.cuentaPropietario,
+    bien.ubicacion,
+    bien.encargado,
+    bien.cuentaEncargado,
+  ];
+
+  return searchFields.some((field) => {
+    if (field === null || field === undefined) return false;
+    const cleanField = String(field)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    return cleanField.includes(cleanQuery);
+  });
+}
+
 export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
   isOpen,
   onClose,
   onSelectBien,
-  alreadySelectedBienIds,
+  alreadySelectedBienIds = [],
   originalGarantiaBienIds = [],
   currentNumeroSolicitud,
-  clientesList,
+  clientesList = [],
   modalidad,
   defaultGarantiaConTipo = 'Farmer Rechnung',
   defaultGarantiaCliente = null,
@@ -34,9 +71,8 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
 }) => {
   const [internalAvailableBienes, setInternalAvailableBienes] = useState<Bien[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<Bien[] | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchError, setSearchError] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   // Bien objetivo que el usuario está configurando
   const [targetBien, setTargetBien] = useState<Bien | null>(null);
@@ -44,102 +80,46 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
   const [targetBienGarantiaCon, setTargetBienGarantiaCon] = useState<TipoGarantiaCon>(defaultGarantiaConTipo);
   const [targetBienCliente, setTargetBienCliente] = useState<Cliente | null>(defaultGarantiaCliente);
 
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Inicializar o cargar la lista base de bienes al abrir
+  // Cargar lista base de bienes al abrir el modal si no están disponibles
   useEffect(() => {
     if (!isOpen) return;
 
-    setSearchError(false);
+    setLoadError(false);
     setSearchTerm('');
-    setSearchResults(null);
     setTargetBien(null);
 
-    if (propAvailableBienes && propAvailableBienes.length > 0) {
+    if (Array.isArray(propAvailableBienes) && propAvailableBienes.length > 0) {
       setInternalAvailableBienes(propAvailableBienes);
+      setIsLoading(false);
     } else {
-      setIsSearching(true);
+      setIsLoading(true);
       obtenerBienes()
         .then((bienes) => {
-          setInternalAvailableBienes(bienes);
+          setInternalAvailableBienes(Array.isArray(bienes) ? bienes : []);
         })
         .catch(() => {
-          setSearchError(true);
+          setLoadError(true);
         })
         .finally(() => {
-          setIsSearching(false);
+          setIsLoading(false);
         });
     }
   }, [isOpen, propAvailableBienes]);
 
-  // Si propAvailableBienes cambia externamente
+  // Actualizar si propAvailableBienes cambia externamente y trae datos
   useEffect(() => {
-    if (propAvailableBienes && propAvailableBienes.length > 0) {
+    if (Array.isArray(propAvailableBienes) && propAvailableBienes.length > 0) {
       setInternalAvailableBienes(propAvailableBienes);
     }
   }, [propAvailableBienes]);
 
-  // Búsqueda interactiva con debounce y filtrado local inmediato
-  useEffect(() => {
-    if (!isOpen) return;
-    const clean = searchTerm.trim();
-    if (!clean) {
-      setSearchResults(null);
-      setIsSearching(false);
-      setSearchError(false);
-      return;
-    }
-
-    // 1. Revisar caché en memoria
-    const searchKey = `search:${clean.toLowerCase()}`;
-    const cached = getFromMemoryCache<Bien[]>('bienes', searchKey);
-    if (cached) {
-      setSearchResults(cached);
-      setIsSearching(false);
-      setSearchError(false);
-      return;
-    }
-
-    // 2. Filtrado local inmediato si hay bienes en memoria
-    if (internalAvailableBienes.length > 0) {
-      const lower = clean.toLowerCase();
-      const localMatches = internalAvailableBienes.filter(
-        (b) =>
-          (b.numeroPoliza || '').toLowerCase().includes(lower) ||
-          (b.propietario || '').toLowerCase().includes(lower) ||
-          String(b.cuentaPropietario || '').includes(lower) ||
-          (b.descripcion || '').toLowerCase().includes(lower) ||
-          (b.marca || '').toLowerCase().includes(lower) ||
-          (b.placa || '').toLowerCase().includes(lower)
-      );
-      if (localMatches.length > 0) {
-        setSearchResults(localMatches);
-      }
-    }
-
-    // 3. Consulta debounced al backend
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      setIsSearching(true);
-      setSearchError(false);
-      try {
-        const results = await buscarBienes(clean);
-        setSearchResults(results);
-      } catch {
-        setSearchError(true);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 350);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [searchTerm, isOpen, internalAvailableBienes]);
+  // Filtrado instantáneo e in-memory en memoria RAM
+  const filteredBienes = useMemo(() => {
+    if (!Array.isArray(internalAvailableBienes)) return [];
+    return internalAvailableBienes.filter((b) => matchesBienQuery(b, searchTerm));
+  }, [internalAvailableBienes, searchTerm]);
 
   if (!isOpen) return null;
-
-  const displayBienes = searchResults !== null ? searchResults : internalAvailableBienes;
 
   const handleSelectBienForAdd = (bien: Bien) => {
     setTargetBien(bien);
@@ -170,15 +150,15 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
 
     const rel: GarantiaBienRelacion = {
       idBien: targetBien.idBien,
-      numeroPoliza: targetBien.numeroPoliza,
-      tipoBien: targetBien.tipoBien,
-      descripcion: targetBien.descripcion,
-      marca: targetBien.marca,
-      modelo: targetBien.modelo,
-      placa: targetBien.placa,
-      propietario: targetBien.propietario,
-      cuentaPropietario: targetBien.cuentaPropietario,
-      ubicacion: targetBien.ubicacion,
+      numeroPoliza: targetBien.numeroPoliza || '',
+      tipoBien: targetBien.tipoBien || 'Otro bien',
+      descripcion: targetBien.descripcion || '',
+      marca: targetBien.marca || '',
+      modelo: targetBien.modelo || '',
+      placa: targetBien.placa || '',
+      propietario: targetBien.propietario || '',
+      cuentaPropietario: targetBien.cuentaPropietario ?? '',
+      ubicacion: targetBien.ubicacion || '',
       valorGarantiaUSD: targetBienValUSD,
       garantiaConTipo: gTipo,
       garantiaConCuenta: gCuenta,
@@ -202,6 +182,7 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
             <span>Seleccionar Vehículo, Maquinaria o Implemento</span>
           </h3>
           <button
+            type="button"
             onClick={onClose}
             className="text-slate-400 hover:text-white p-1 cursor-pointer"
           >
@@ -217,7 +198,7 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar por N.º de póliza, tipo, marca, propietario o placa..."
+              placeholder="Buscar por N.º de póliza, tipo, marca, modelo, placa, propietario o cuenta..."
               autoFocus
               className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-700"
             />
@@ -226,33 +207,33 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
 
         {/* Lista de bienes */}
         <div className="overflow-y-auto p-3 flex-1 divide-y divide-slate-100">
-          {isSearching && displayBienes.length === 0 ? (
+          {isLoading ? (
             <div className="p-8 text-center text-slate-600 flex flex-col items-center justify-center gap-2">
               <RefreshCw className="w-5 h-5 animate-spin text-blue-800" />
-              <span className="font-semibold text-xs text-slate-700">Buscando bienes...</span>
-              <span className="text-[11px] text-slate-400">Consultando registros oficiales en Google Sheets</span>
+              <span className="font-semibold text-xs text-slate-700">Cargando lista de bienes...</span>
             </div>
-          ) : searchError ? (
+          ) : loadError ? (
             <div className="p-8 text-center text-red-600 flex flex-col items-center justify-center gap-2 text-xs">
               <AlertCircle className="w-5 h-5 text-red-500" />
               <span className="font-semibold">No se pudo cargar la información.</span>
               <button
                 type="button"
                 onClick={() => {
-                  setSearchError(false);
-                  setIsSearching(true);
+                  setLoadError(false);
+                  setIsLoading(true);
                   obtenerBienes(true)
-                    .then((b) => setInternalAvailableBienes(b))
-                    .catch(() => setSearchError(true))
-                    .finally(() => setIsSearching(false));
+                    .then((b) => setInternalAvailableBienes(Array.isArray(b) ? b : []))
+                    .catch(() => setLoadError(true))
+                    .finally(() => setIsLoading(false));
                 }}
                 className="mt-1 px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-semibold transition cursor-pointer"
               >
                 Reintentar
               </button>
             </div>
-          ) : displayBienes.length > 0 ? (
-            displayBienes.map((bien) => {
+          ) : filteredBienes.length > 0 ? (
+            filteredBienes.map((bien) => {
+              if (!bien) return null;
               const isBlocked = bien.estado === 'Bloqueado';
               const isInactive = bien.estado === 'Inactivo';
 
@@ -275,7 +256,7 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
 
               return (
                 <div
-                  key={bien.idBien}
+                  key={String(bien.idBien || bien.numeroPoliza || Math.random())}
                   className={`p-2.5 flex items-center justify-between text-xs transition ${
                     isDisabled ? 'bg-slate-50 opacity-60' : 'hover:bg-blue-50 cursor-pointer'
                   }`}
@@ -284,14 +265,14 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <span className="font-mono font-bold text-blue-950 bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">
-                        {bien.numeroPoliza}
+                        {bien.numeroPoliza || 'Sin Póliza'}
                       </span>
                       <span className="font-semibold text-slate-800">
-                        {bien.tipoBien} {bien.descripcion ? `- ${bien.descripcion}` : ''}
+                        {bien.tipoBien || 'Bien'} {bien.descripcion ? `- ${bien.descripcion}` : ''}
                       </span>
                       {(bien.marca || bien.modelo) && (
                         <span className="text-[11px] text-slate-500 font-mono">
-                          ({bien.marca} {bien.modelo})
+                          ({bien.marca || ''} {bien.modelo || ''})
                         </span>
                       )}
                       <span
@@ -303,7 +284,7 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
                             : 'bg-red-50 text-red-800 border-red-200'
                         }`}
                       >
-                        {bien.estado}
+                        {bien.estado || 'Disponible'}
                       </span>
                       {wasOriginallyInThisGarantia && !isAlreadySelected && (
                         <span className="px-1 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-900 border border-blue-200">
@@ -312,7 +293,7 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
                       )}
                     </div>
                     <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3">
-                      <span>Propietario: {bien.propietario} (Cta: {bien.cuentaPropietario})</span>
+                      <span>Propietario: {bien.propietario || '—'} (Cta: {bien.cuentaPropietario || '—'})</span>
                       {bien.encargado && (
                         <span>
                           Encargado: {bien.encargado}{bien.cuentaEncargado ? ` (Cta: ${bien.cuentaEncargado})` : ''}
@@ -352,7 +333,7 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
           <div className="p-3 bg-blue-50/60 border-t border-blue-200 space-y-2 text-xs">
             <div className="font-bold text-blue-950 flex items-center justify-between">
               <span>
-                Configurar compromiso: Póliza {targetBien.numeroPoliza} ({targetBien.tipoBien})
+                Configurar compromiso: Póliza {targetBien.numeroPoliza || 'Sin Póliza'} ({targetBien.tipoBien || 'Bien'})
               </span>
             </div>
 

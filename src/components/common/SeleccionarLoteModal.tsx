@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Search, RefreshCw, AlertCircle, MapPin } from 'lucide-react';
 import { Lote, Cliente, GarantiaLoteRelacion, TipoGarantiaCon } from '../../types';
 import { obtenerLotes, buscarLotes, obtenerDisponibilidadLote, DisponibilidadLoteInfo } from '../../services/backend';
@@ -78,65 +78,42 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
     }
   }, [propAvailableLotes]);
 
-  // Búsqueda interactiva con debounce y filtrado local inmediato
-  useEffect(() => {
-    if (!isOpen) return;
-    const clean = searchTerm.trim();
-    if (!clean) {
-      setSearchResults(null);
-      setIsSearching(false);
-      setSearchError(false);
-      return;
-    }
+  // Filtrado instantáneo e in-memory en RAM
+  const filteredLotes = useMemo(() => {
+    if (!Array.isArray(internalAvailableLotes)) return [];
+    if (!searchTerm.trim()) return internalAvailableLotes;
 
-    // 1. Revisar caché en memoria
-    const searchKey = `search:${clean.toLowerCase()}`;
-    const cached = getFromMemoryCache<Lote[]>('lotes', searchKey);
-    if (cached) {
-      setSearchResults(cached);
-      setIsSearching(false);
-      setSearchError(false);
-      return;
-    }
+    const cleanQuery = searchTerm
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
 
-    // 2. Filtrado inmediato si hay lotes en memoria
-    if (internalAvailableLotes.length > 0) {
-      const lower = clean.toLowerCase();
-      const localMatches = internalAvailableLotes.filter(
-        (l) =>
-          (l.numeroLote || '').toLowerCase().includes(lower) ||
-          (l.propietario || '').toLowerCase().includes(lower) ||
-          String(l.cuentaPropietario || '').includes(lower) ||
-          (l.ubicacion || '').toLowerCase().includes(lower)
-      );
-      if (localMatches.length > 0) {
-        setSearchResults(localMatches);
-      }
-    }
-
-    // 3. Consulta debounced al backend
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      setIsSearching(true);
-      setSearchError(false);
-      try {
-        const results = await buscarLotes(clean, true);
-        setSearchResults(results);
-      } catch {
-        setSearchError(true);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 350);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [searchTerm, isOpen, internalAvailableLotes]);
+    return internalAvailableLotes.filter((lote) => {
+      if (!lote) return false;
+      const searchFields = [
+        lote.numeroLote,
+        lote.idLote,
+        lote.propietario,
+        lote.cuentaPropietario,
+        lote.ubicacion,
+        lote.encargado,
+        lote.cuentaEncargado,
+      ];
+      return searchFields.some((field) => {
+        if (field === null || field === undefined) return false;
+        const cleanField = String(field)
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+        return cleanField.includes(cleanQuery);
+      });
+    });
+  }, [internalAvailableLotes, searchTerm]);
 
   if (!isOpen) return null;
 
-  const displayLotes = searchResults !== null ? searchResults : internalAvailableLotes;
+  const displayLotes = filteredLotes;
 
   const handleSelectLoteForAdd = async (lote: Lote) => {
     setTargetLote(lote);
@@ -312,7 +289,7 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
               </button>
             </div>
           ) : displayLotes.length > 0 ? (
-            displayLotes.map((lote) => {
+            displayLotes.map((lote: Lote) => {
               const originalItem = originalGarantiaLotes.find(
                 (orig) => String(orig.idLote) === String(lote.idLote)
               );
