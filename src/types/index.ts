@@ -82,6 +82,9 @@ export interface GarantiaLoteRelacion {
   garantiaConTipo?: TipoGarantiaCon | string;
   garantiaConCuenta?: string | number;
   garantiaConNombre?: string;
+  hectareasIndeterminadas?: boolean;
+  hectareasMaxPermitidas?: number;
+  hectareasEnOtrasGarantias?: number;
 }
 
 export interface GarantiaBienRelacion {

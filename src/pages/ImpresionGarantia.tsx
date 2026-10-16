@@ -17,6 +17,7 @@ interface UniqueSigner {
   cuenta: string;
   isPrestatario: boolean;
   isPropietario: boolean;
+  isAcreedor: boolean;
 }
 
 export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
@@ -27,10 +28,6 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
 }) => {
   const isLiberada = isLiberadaProp || !!(garantiaProp as GarantiaLiberada).fechaLiberacion;
   const fechaLiberacion = fechaLiberacionProp || (garantiaProp as GarantiaLiberada).fechaLiberacion;
-
-  // CAMPO TEMPORAL: IDENTIFICACIÓN (CI / Documento)
-  // No se guarda en base de datos. Vive únicamente en el estado local de esta sesión.
-  const [identificacionTemporal, setIdentificacionTemporal] = useState('');
 
   // Estados de carga de datos completos desde el backend
   const [fullGarantia, setFullGarantia] = useState<Garantia | GarantiaLiberada | null>(null);
@@ -204,6 +201,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
       cuenta: oCuenta,
       isPrestatario: matchesPrestatario,
       isPropietario: true,
+      isAcreedor: false,
     });
   });
 
@@ -221,17 +219,59 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
         cuenta: cuentaPrest,
         isPrestatario: true,
         isPropietario: false,
+        isAcreedor: false,
       });
     }
   }
 
+  // 3. Agregar acreedores de tipo Cliente registrado (excluyendo Farmer Rechnung y Campo Grande)
+  const registrarAcreedorItem = (tipo: string, cuenta: string | number, nombre: string) => {
+    const tClean = (tipo || '').trim();
+    const nClean = (nombre || '').trim();
+    const cClean = cuenta !== undefined && cuenta !== null ? String(cuenta).trim() : '';
+
+    if (tClean.toLowerCase() === 'cliente' || (cClean && tClean !== 'Farmer Rechnung' && tClean !== 'Campo Grande')) {
+      const aKey = cClean ? `cta:${cClean}` : `nom:${nClean.toLowerCase()}`;
+      if (!aKey || aKey === 'nom:') return;
+
+      if (signersMap.has(aKey)) {
+        const existing = signersMap.get(aKey)!;
+        existing.isAcreedor = true;
+        if (!existing.nombre && nClean) existing.nombre = nClean;
+        if (!existing.cuenta && cClean) existing.cuenta = cClean;
+      } else {
+        signersMap.set(aKey, {
+          key: aKey,
+          nombre: nClean || `Cliente N.º ${cClean}`,
+          cuenta: cClean,
+          isPrestatario: aKey === prestatarioKey,
+          isPropietario: false,
+          isAcreedor: true,
+        });
+      }
+    }
+  };
+
+  lotes.forEach((l) => {
+    registrarAcreedorItem(l.garantiaConTipo || '', l.garantiaConCuenta || '', l.garantiaConNombre || '');
+  });
+  bienes.forEach((b) => {
+    registrarAcreedorItem(b.garantiaConTipo || '', b.garantiaConCuenta || '', b.garantiaConNombre || '');
+  });
+  registrarAcreedorItem(
+    currentGarantia.garantiaConTipo || '',
+    currentGarantia.garantiaConCuenta || '',
+    currentGarantia.garantiaConNombre || ''
+  );
+
   const uniqueSigners = Array.from(signersMap.values());
 
-  // Determinar si la única persona involucrada es a la vez propietario y prestatario
+  // Determinar si la única persona involucrada es a la vez propietario y prestatario (y no acreedor)
   const isSamePerson =
     uniqueSigners.length === 1 &&
     uniqueSigners[0].isPrestatario &&
-    uniqueSigners[0].isPropietario;
+    uniqueSigners[0].isPropietario &&
+    !uniqueSigners[0].isAcreedor;
 
   // Consolidar Acreedores
   const acreedoresSet = new Set<string>();
@@ -346,25 +386,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
           </div>
         </div>
 
-        {/* Panel de campo temporal CI / Documento (No imprimible) */}
-        <div className="print:hidden p-3 bg-amber-50 border-b border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 text-amber-900 font-medium">
-            <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
-            <span>
-              <strong>Campo Temporal:</strong> Ingrese el N.º de Identificación / CI para completar el documento impreso (no se guarda en la base de datos).
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-[11px] font-bold text-slate-700 uppercase">Identificación:</label>
-            <input
-              type="text"
-              value={identificacionTemporal}
-              onChange={(e) => setIdentificacionTemporal(e.target.value)}
-              placeholder="Ej: CI / RUN / Pasaporte..."
-              className="px-2.5 py-1 text-xs bg-white border border-amber-300 rounded font-mono focus:outline-none focus:ring-1 focus:ring-amber-600"
-            />
-          </div>
-        </div>
+
 
         {/* Banner Estado de Carga (No imprimible) */}
         {isLoading && (
@@ -452,12 +474,6 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
                       <span className="text-slate-600">Nombre Completo: </span>
                       <strong className="text-slate-900">{nomPrest || '—'}</strong>
                     </div>
-                    {identificacionTemporal && (
-                      <div className="col-span-1 sm:col-span-2 text-slate-800 pt-0.5">
-                        <span className="text-slate-600">Identificación / Documento: </span>
-                        <strong className="font-mono text-slate-900">{identificacionTemporal}</strong>
-                      </div>
-                    )}
                   </div>
                 </>
               ) : (
@@ -481,12 +497,6 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
                           </div>
                         </div>
                       ))}
-                      {identificacionTemporal && (
-                        <div className="col-span-1 sm:col-span-2 text-slate-800 pt-1">
-                          <span className="text-slate-600">Identificación / Documento: </span>
-                          <strong className="font-mono text-slate-900">{identificacionTemporal}</strong>
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
@@ -502,12 +512,6 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
                           {distinctOwners[0]?.nombre || currentGarantia.propietario || '—'}
                         </strong>
                       </div>
-                      {identificacionTemporal && (
-                        <div className="col-span-1 sm:col-span-2 text-slate-800">
-                          <span className="text-slate-600">Identificación / Documento: </span>
-                          <strong className="font-mono text-slate-900">{identificacionTemporal}</strong>
-                        </div>
-                      )}
                     </div>
                   )}
                 </>
@@ -750,7 +754,9 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
               >
                 {uniqueSigners.map((signer, idx) => {
                   let tituloFirma = 'FIRMA DEL PROPIETARIO';
-                  if (signer.isPropietario && signer.isPrestatario) {
+                  if (signer.isAcreedor) {
+                    tituloFirma = 'FIRMA DEL ACREEDOR';
+                  } else if (signer.isPropietario && signer.isPrestatario) {
                     tituloFirma = 'FIRMA DEL PROPIETARIO Y PRESTATARIO';
                   } else if (signer.isPrestatario && !signer.isPropietario) {
                     tituloFirma = 'FIRMA DEL INTERESADO / PRESTATARIO';

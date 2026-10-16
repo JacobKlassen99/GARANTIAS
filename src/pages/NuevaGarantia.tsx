@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   FilePlus,
   Calendar,
@@ -46,6 +46,7 @@ import { SeleccionarBienModal } from '../components/common/SeleccionarBienModal'
 import { getTodayIso, formatHectareas, formatPropietario, parseDecimal } from '../utils/textSearch';
 import { ImpresionGarantia } from './ImpresionGarantia';
 import { NavSection } from '../components/layout/Sidebar';
+import { analizarAcreedoresItems } from '../utils/acreedores';
 
 interface NuevaGarantiaProps {
   onSuccessCreated: () => void;
@@ -514,19 +515,139 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
     };
   };
 
+  // Analizar acreedores en todos los ítems actuales (lotes y bienes)
+  const resumenAcreedores = useMemo(() => {
+    return analizarAcreedoresItems(selectedLotes, selectedBienes);
+  }, [selectedLotes, selectedBienes]);
+
+  // Determinar qué botón visual debe aparecer como seleccionado en la cabecera
+  const activeAcreedorTipo: TipoGarantiaCon | 'Multiple' = useMemo(() => {
+    if (modalidad === 'Múltiple') {
+      if (resumenAcreedores.esMultiple) {
+        return 'Multiple';
+      }
+      if (resumenAcreedores.tieneItems && resumenAcreedores.acreedorUnico) {
+        return resumenAcreedores.acreedorUnico.tipo;
+      }
+    }
+    return garantiaConTipo;
+  }, [modalidad, resumenAcreedores, garantiaConTipo]);
+
+  // Sincronizar automáticamente el cliente del selector superior si todos los ítems comparten un único cliente
+  useEffect(() => {
+    if (
+      modalidad === 'Múltiple' &&
+      resumenAcreedores.tieneItems &&
+      !resumenAcreedores.esMultiple &&
+      resumenAcreedores.acreedorUnico?.tipo === 'Cliente'
+    ) {
+      const cta = resumenAcreedores.acreedorUnico.cuenta;
+      if (cta && String(selectedGarantiaCliente?.cuenta) !== String(cta)) {
+        const found = clientesList.find((c) => String(c.cuenta).trim() === String(cta).trim());
+        if (found) {
+          setSelectedGarantiaCliente(found);
+        } else {
+          setSelectedGarantiaCliente({
+            cuenta: cta,
+            nombre: resumenAcreedores.acreedorUnico.nombre || `Cliente ${cta}`,
+            ci: '',
+          });
+        }
+      }
+    }
+  }, [modalidad, resumenAcreedores, clientesList]);
+
+  const handleSelectHeaderCreditor = (tipo: TipoGarantiaCon) => {
+    setGarantiaConTipo(tipo);
+    if (tipo !== 'Cliente') {
+      setSelectedGarantiaCliente(null);
+    }
+    if (modalidad === 'Múltiple' && selectedLotes.length + selectedBienes.length > 0 && !resumenAcreedores.esMultiple) {
+      setSelectedLotes((prev) =>
+        prev.map((l) => ({
+          ...l,
+          garantiaConTipo: tipo,
+          garantiaConCuenta: tipo === 'Cliente' ? (selectedGarantiaCliente ? String(selectedGarantiaCliente.cuenta) : '') : '',
+          garantiaConNombre: tipo === 'Cliente' ? (selectedGarantiaCliente ? `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}` : '') : tipo,
+        }))
+      );
+      setSelectedBienes((prev) =>
+        prev.map((b) => ({
+          ...b,
+          garantiaConTipo: tipo,
+          garantiaConCuenta: tipo === 'Cliente' ? (selectedGarantiaCliente ? String(selectedGarantiaCliente.cuenta) : '') : '',
+          garantiaConNombre: tipo === 'Cliente' ? (selectedGarantiaCliente ? `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}` : '') : tipo,
+        }))
+      );
+    }
+  };
+
+  const handleSelectHeaderClient = (client: Cliente | null) => {
+    setSelectedGarantiaCliente(client);
+    if (modalidad === 'Múltiple' && client && !resumenAcreedores.esMultiple) {
+      const cta = String(client.cuenta);
+      const nom = `${client.cuenta} — ${client.nombre}`;
+      setSelectedLotes((prev) =>
+        prev.map((l) => ({
+          ...l,
+          garantiaConTipo: 'Cliente',
+          garantiaConCuenta: cta,
+          garantiaConNombre: nom,
+        }))
+      );
+      setSelectedBienes((prev) =>
+        prev.map((b) => ({
+          ...b,
+          garantiaConTipo: 'Cliente',
+          garantiaConCuenta: cta,
+          garantiaConNombre: nom,
+        }))
+      );
+    }
+  };
+
   // Preparar objeto de garantía en memoria (para guardar o para imprimir sin guardar)
   const buildGarantiaPayload = (): Partial<Garantia> => {
     const { propietario: mainPropNombre, cuentaPropietario: mainPropCuenta } = getPropietariosResumen();
 
-    const gNombre =
-      garantiaConTipo === 'Cliente' && selectedGarantiaCliente
-        ? `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}`
-        : garantiaConTipo;
+    // Determinar la cabecera técnica
+    let headerTipo: TipoGarantiaCon = 'Farmer Rechnung';
+    let headerCuenta: string | undefined = undefined;
+    let headerNombre = 'Farmer Rechnung';
 
-    const gCuenta =
-      garantiaConTipo === 'Cliente' && selectedGarantiaCliente
-        ? selectedGarantiaCliente.cuenta
-        : undefined;
+    if (modalidad === 'Simple') {
+      if (garantiaConTipo === 'Campo Grande') {
+        headerTipo = 'Campo Grande';
+        headerNombre = 'Campo Grande';
+      } else if (garantiaConTipo === 'Cliente' && selectedGarantiaCliente?.cuenta) {
+        headerTipo = 'Cliente';
+        headerCuenta = String(selectedGarantiaCliente.cuenta);
+        headerNombre = `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}`;
+      } else {
+        headerTipo = 'Farmer Rechnung';
+        headerNombre = 'Farmer Rechnung';
+      }
+    } else {
+      // Modalidad Múltiple
+      if (resumenAcreedores.tieneItems && !resumenAcreedores.esMultiple && resumenAcreedores.acreedorUnico) {
+        if (resumenAcreedores.acreedorUnico.tipo === 'Campo Grande') {
+          headerTipo = 'Campo Grande';
+          headerNombre = 'Campo Grande';
+        } else if (resumenAcreedores.acreedorUnico.tipo === 'Cliente' && resumenAcreedores.acreedorUnico.cuenta) {
+          headerTipo = 'Cliente';
+          headerCuenta = resumenAcreedores.acreedorUnico.cuenta;
+          headerNombre = resumenAcreedores.acreedorUnico.nombre || `Cliente ${resumenAcreedores.acreedorUnico.cuenta}`;
+        } else {
+          headerTipo = 'Farmer Rechnung';
+          headerNombre = 'Farmer Rechnung';
+        }
+      } else {
+        // Tienen múltiples acreedores diferentes: la cabecera técnica es una institución real (Farmer Rechnung con cuenta vacía)
+        // NUNCA enviar 'Cliente' con cuenta vacía a Apps Script
+        headerTipo = 'Farmer Rechnung';
+        headerNombre = 'Farmer Rechnung';
+      }
+    }
 
     return {
       numeroSolicitud: numeroSolicitud.trim(),
@@ -536,9 +657,9 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
       propietario: mainPropNombre,
       cuentaPrestatario: selectedPrestatario ? selectedPrestatario.cuenta : '',
       prestatario: selectedPrestatario ? selectedPrestatario.nombre : '',
-      garantiaConTipo,
-      garantiaConCuenta: gCuenta,
-      garantiaConNombre: gNombre,
+      garantiaConTipo: headerTipo,
+      garantiaConCuenta: headerCuenta,
+      garantiaConNombre: headerNombre,
       tipoGarantia: tipoGarantiaCalculado,
       modalidad: modalidad || 'Simple',
       observacion: observacion.trim(),
@@ -592,21 +713,21 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
       return;
     }
 
-    if (garantiaConTipo === 'Cliente' && !selectedGarantiaCliente) {
+    if (modalidad === 'Simple' && garantiaConTipo === 'Cliente' && !selectedGarantiaCliente) {
       setErrorMessage('Ha seleccionado "Cliente registrado" como acreedor en la Sección 3, debe especificar el cliente.');
       return;
     }
 
     // Validar que cada lote y bien con acreedor tipo Cliente tenga asignado su respectivo cliente
-    const loteSinCliente = selectedLotes.find((l) => l.garantiaConTipo === 'Cliente' && (!l.garantiaConCuenta || !l.garantiaConNombre));
+    const loteSinCliente = selectedLotes.find((l) => l.garantiaConTipo === 'Cliente' && !String(l.garantiaConCuenta || '').trim());
     if (loteSinCliente) {
-      setErrorMessage(`El Lote ${loteSinCliente.numeroLote} tiene como acreedor a un Cliente registrado pero no se ha especificado el cliente.`);
+      setErrorMessage(`El lote ${loteSinCliente.numeroLote || loteSinCliente.idLote} tiene acreedor Cliente sin número de cuenta`);
       return;
     }
 
-    const bienSinCliente = selectedBienes.find((b) => b.garantiaConTipo === 'Cliente' && (!b.garantiaConCuenta || !b.garantiaConNombre));
+    const bienSinCliente = selectedBienes.find((b) => b.garantiaConTipo === 'Cliente' && !String(b.garantiaConCuenta || '').trim());
     if (bienSinCliente) {
-      setErrorMessage(`El bien ${bienSinCliente.numeroPoliza} tiene como acreedor a un Cliente registrado pero no se ha especificado el cliente.`);
+      setErrorMessage(`El bien ${bienSinCliente.numeroPoliza || bienSinCliente.idBien} tiene acreedor Cliente sin número de cuenta`);
       return;
     }
 
@@ -892,66 +1013,69 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
           <div className="space-y-3">
             <p className="text-xs text-slate-600">
               {modalidad === 'Múltiple'
-                ? 'Seleccione el acreedor por defecto (en modalidad múltiple, cada elemento puede personalizarse):'
+                ? resumenAcreedores.esMultiple
+                  ? 'Acreedor de la Garantía (Múltiples asignaciones individuales):'
+                  : 'Seleccione el acreedor por defecto (en modalidad múltiple, cada elemento puede personalizarse):'
                 : 'Todos los elementos de esta garantía quedarán constituidos en favor de:'}
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setGarantiaConTipo('Farmer Rechnung');
-                  setSelectedGarantiaCliente(null);
-                }}
-                className={`py-2 px-3 text-xs font-bold rounded border transition text-left flex items-center justify-between cursor-pointer ${
-                  garantiaConTipo === 'Farmer Rechnung'
-                    ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
-                    : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
-                }`}
-              >
-                <span>Farmer Rechnung</span>
-                {garantiaConTipo === 'Farmer Rechnung' && <CheckCircle2 className="w-3.5 h-3.5" />}
-              </button>
+            <div
+              className={`grid ${
+                modalidad === 'Múltiple' && resumenAcreedores.esMultiple
+                  ? 'grid-cols-2 sm:grid-cols-4'
+                  : 'grid-cols-1 sm:grid-cols-3'
+              } gap-2`}
+            >
+              {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => {
+                const isDisabled = modalidad === 'Múltiple' && resumenAcreedores.esMultiple;
+                const isSelected = !isDisabled && activeAcreedorTipo === tipo;
+                return (
+                  <button
+                    key={tipo}
+                    type="button"
+                    disabled={isDisabled}
+                    onClick={() => handleSelectHeaderCreditor(tipo)}
+                    className={`py-2 px-3 text-xs font-bold rounded border transition text-left flex items-center justify-between ${
+                      isDisabled
+                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
+                        : isSelected
+                        ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs cursor-pointer'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100 cursor-pointer'
+                    }`}
+                  >
+                    <span>{tipo === 'Cliente' ? 'Cliente registrado' : tipo}</span>
+                    {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
+                  </button>
+                );
+              })}
 
-              <button
-                type="button"
-                onClick={() => {
-                  setGarantiaConTipo('Campo Grande');
-                  setSelectedGarantiaCliente(null);
-                }}
-                className={`py-2 px-3 text-xs font-bold rounded border transition text-left flex items-center justify-between cursor-pointer ${
-                  garantiaConTipo === 'Campo Grande'
-                    ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
-                    : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
-                }`}
-              >
-                <span>Campo Grande</span>
-                {garantiaConTipo === 'Campo Grande' && <CheckCircle2 className="w-3.5 h-3.5" />}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setGarantiaConTipo('Cliente')}
-                className={`py-2 px-3 text-xs font-bold rounded border transition text-left flex items-center justify-between cursor-pointer ${
-                  garantiaConTipo === 'Cliente'
-                    ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
-                    : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
-                }`}
-              >
-                <span>Cliente registrado</span>
-                {garantiaConTipo === 'Cliente' && <CheckCircle2 className="w-3.5 h-3.5" />}
-              </button>
+              {modalidad === 'Múltiple' && resumenAcreedores.esMultiple && (
+                <button
+                  type="button"
+                  disabled
+                  className="py-2 px-3 text-xs font-bold rounded border transition text-center bg-emerald-800 text-white border-emerald-900 shadow-xs cursor-default flex items-center justify-center gap-1.5"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Múltiples acreedores</span>
+                </button>
+              )}
             </div>
 
+            {modalidad === 'Múltiple' && resumenAcreedores.esMultiple && (
+              <p className="mt-1 text-[10px] text-slate-500 italic">
+                Los ítems agregados tienen diferentes acreedores asignados de forma individual. Modifique el acreedor directamente en cada fila si desea cambiarlo.
+              </p>
+            )}
+
             {/* Si selecciona "Cliente registrado", mostrar buscador */}
-            {garantiaConTipo === 'Cliente' && (
+            {(!resumenAcreedores.esMultiple || modalidad === 'Simple') && activeAcreedorTipo === 'Cliente' && (
               <div className="pt-2">
                 <ClientSearchAutocomplete
                   label="Cliente Receptor de la Garantía (Google Sheets)"
                   placeholder="Buscar cliente registrado por N.º de cuenta o nombre..."
                   clientesList={clientesList}
                   selectedCuenta={selectedGarantiaCliente?.cuenta}
-                  onSelect={setSelectedGarantiaCliente}
+                  onSelect={handleSelectHeaderClient}
                   required
                   helperText="Al seleccionar un cliente registrado, se vinculará su cuenta y nombre oficiales de Google Sheets."
                 />
@@ -1022,7 +1146,12 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
                       {formatPropietario(lote.propietario, lote.cuentaPropietario)}
                     </td>
                     <td className="py-1.5 px-3 border-r border-slate-200 text-right font-mono font-bold text-emerald-900">
-                      {formatHectareas(lote.hectareas)}
+                      <div>{formatHectareas(lote.hectareas)} ha</div>
+                      {lote.hectareasEnOtrasGarantias !== undefined && lote.hectareasEnOtrasGarantias > 0 && (
+                        <div className="text-[10px] text-purple-700 font-sans font-normal">
+                          ({formatHectareas(lote.hectareasEnOtrasGarantias)} ha en otra garantía)
+                        </div>
+                      )}
                     </td>
                     <td className="py-1.5 px-3 border-r border-slate-200 font-semibold text-slate-800">
                       {lote.garantiaConNombre || garantiaConTipo}

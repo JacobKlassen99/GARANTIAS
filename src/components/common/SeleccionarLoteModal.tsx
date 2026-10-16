@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Search, RefreshCw, AlertCircle, MapPin } from 'lucide-react';
 import { Lote, Cliente, GarantiaLoteRelacion, TipoGarantiaCon } from '../../types';
-import { obtenerLotes, buscarLotes } from '../../services/backend';
+import { obtenerLotes, buscarLotes, obtenerDisponibilidadLote, DisponibilidadLoteInfo } from '../../services/backend';
 import { getFromMemoryCache } from '../../services/dataCache';
 import { formatHectareas, parseDecimal } from '../../utils/textSearch';
 import { ClientSearchAutocomplete } from './ClientSearchAutocomplete';
@@ -11,12 +11,13 @@ export interface SeleccionarLoteModalProps {
   onClose: () => void;
   onSelectLote: (loteRel: GarantiaLoteRelacion) => void;
   alreadySelectedLoteIds: (string | number)[];
-  originalGarantiaLotes?: { idLote: string | number; hectareas: number }[];
+  originalGarantiaLotes?: { idLote: string | number; numeroLote?: string; hectareas: number }[];
   clientesList: Cliente[];
   modalidad: 'Simple' | 'Múltiple';
   defaultGarantiaConTipo?: TipoGarantiaCon;
   defaultGarantiaCliente?: Cliente | null;
   availableLotes?: Lote[];
+  idGarantiaActual?: string;
 }
 
 export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
@@ -30,6 +31,7 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
   defaultGarantiaConTipo = 'Farmer Rechnung',
   defaultGarantiaCliente = null,
   availableLotes: propAvailableLotes,
+  idGarantiaActual,
 }) => {
   const [internalAvailableLotes, setInternalAvailableLotes] = useState<Lote[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -39,13 +41,15 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
 
   // Lote objetivo que el usuario está configurando
   const [targetLote, setTargetLote] = useState<Lote | null>(null);
+  const [targetLoteDispInfo, setTargetLoteDispInfo] = useState<DisponibilidadLoteInfo | null>(null);
+  const [isResolvingDisp, setIsResolvingDisp] = useState(false);
   const [targetLoteHa, setTargetLoteHa] = useState<number | string>(0);
   const [targetLoteGarantiaCon, setTargetLoteGarantiaCon] = useState<TipoGarantiaCon>(defaultGarantiaConTipo);
   const [targetLoteCliente, setTargetLoteCliente] = useState<Cliente | null>(defaultGarantiaCliente);
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Inicializar o cargar la lista base de lotes al abrir
+  // Inicializar y refrescar la lista base de lotes con compromisos actualizados al abrir
   useEffect(() => {
     if (!isOpen) return;
 
@@ -54,22 +58,18 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
     setSearchResults(null);
     setTargetLote(null);
 
-    if (propAvailableLotes && propAvailableLotes.length > 0) {
-      setInternalAvailableLotes(propAvailableLotes);
-    } else {
-      setIsSearching(true);
-      obtenerLotes()
-        .then((lotes) => {
-          setInternalAvailableLotes(lotes);
-        })
-        .catch(() => {
-          setSearchError(true);
-        })
-        .finally(() => {
-          setIsSearching(false);
-        });
-    }
-  }, [isOpen, propAvailableLotes]);
+    setIsSearching(true);
+    obtenerLotes(true)
+      .then((lotes) => {
+        setInternalAvailableLotes(lotes);
+      })
+      .catch(() => {
+        setSearchError(true);
+      })
+      .finally(() => {
+        setIsSearching(false);
+      });
+  }, [isOpen]);
 
   // Si propAvailableLotes cambia externamente
   useEffect(() => {
@@ -120,7 +120,7 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
       setIsSearching(true);
       setSearchError(false);
       try {
-        const results = await buscarLotes(clean);
+        const results = await buscarLotes(clean, true);
         setSearchResults(results);
       } catch {
         setSearchError(true);
@@ -138,22 +138,51 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
 
   const displayLotes = searchResults !== null ? searchResults : internalAvailableLotes;
 
-  const handleSelectLoteForAdd = (lote: Lote) => {
+  const handleSelectLoteForAdd = async (lote: Lote) => {
     setTargetLote(lote);
-
-    const originalItem = originalGarantiaLotes.find(
-      (orig) => String(orig.idLote) === String(lote.idLote)
-    );
-    const originalHa = originalItem ? Number(originalItem.hectareas) || 0 : 0;
-    const rawDisp =
-      lote.hectareasDisponibles !== undefined && lote.hectareasDisponibles !== null
-        ? lote.hectareasDisponibles
-        : lote.hectareas || 0;
-    const disp = rawDisp + originalHa;
-
-    setTargetLoteHa(disp > 0 ? disp : lote.hectareas || 0);
     setTargetLoteGarantiaCon(defaultGarantiaConTipo);
     setTargetLoteCliente(defaultGarantiaCliente);
+    setIsResolvingDisp(true);
+
+    try {
+      const dispInfo = await obtenerDisponibilidadLote(
+        {
+          idLote: lote.idLote,
+          numeroLote: lote.numeroLote,
+          hectareas: lote.hectareas,
+          cuentaPropietario: lote.cuentaPropietario,
+          propietario: lote.propietario,
+        },
+        idGarantiaActual
+      );
+      setTargetLoteDispInfo(dispInfo);
+
+      const originalItem = originalGarantiaLotes.find(
+        (orig) =>
+          (lote.idLote && String(orig.idLote).toLowerCase() === String(lote.idLote).toLowerCase()) ||
+          (orig.numeroLote && lote.numeroLote && orig.numeroLote.toLowerCase() === lote.numeroLote.toLowerCase())
+      );
+      const originalHa = originalItem ? Number(originalItem.hectareas) || 0 : 0;
+
+      const disp = dispInfo.hectareasDisponiblesParaEstaGarantia;
+      const valorInicial = originalHa > 0 ? originalHa : disp;
+
+      setTargetLoteHa(valorInicial > 0 ? valorInicial : dispInfo.hectareasTotales || lote.hectareas || 0);
+    } catch (err) {
+      console.warn('Error al resolver disponibilidad del lote:', err);
+      const orig = originalGarantiaLotes.find(
+        (o) => String(o.idLote) === String(lote.idLote)
+      );
+      const origHa = orig ? Number(orig.hectareas) || 0 : 0;
+      const rawDisp =
+        lote.hectareasDisponibles !== undefined && lote.hectareasDisponibles !== null
+          ? lote.hectareasDisponibles
+          : lote.hectareas || 0;
+      const fallbackDisp = Math.round((rawDisp + origHa) * 1e6) / 1e6;
+      setTargetLoteHa(fallbackDisp > 0 ? fallbackDisp : lote.hectareas || 0);
+    } finally {
+      setIsResolvingDisp(false);
+    }
   };
 
   const handleConfirmAddLote = () => {
@@ -164,20 +193,30 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
       return;
     }
 
+    const originalItem = originalGarantiaLotes.find(
+      (orig) =>
+        (targetLote.idLote && String(orig.idLote).toLowerCase() === String(targetLote.idLote).toLowerCase()) ||
+        (orig.numeroLote && targetLote.numeroLote && orig.numeroLote.toLowerCase() === targetLote.numeroLote.toLowerCase())
+    );
+    const originalHa = originalItem ? Number(originalItem.hectareas) || 0 : 0;
+
+    const disp = targetLoteDispInfo
+      ? targetLoteDispInfo.hectareasDisponiblesParaEstaGarantia
+      : Math.round(((targetLote.hectareasDisponibles !== undefined ? targetLote.hectareasDisponibles : targetLote.hectareas || 0) + originalHa) * 1e6) / 1e6;
+
+    if (haNum > disp + 1e-6) {
+      const enOtras = targetLoteDispInfo?.hectareasEnOtrasGarantias || 0;
+      const detOtras = enOtras > 0 ? ` (${formatHectareas(enOtras)} ha comprometidas en otra garantía)` : '';
+      alert(
+        `No puede comprometer ${formatHectareas(haNum)} ha. El máximo disponible para este lote en esta garantía es ${formatHectareas(disp)} ha${detOtras}.`
+      );
+      return;
+    }
+
     if (targetLoteGarantiaCon === 'Cliente' && !targetLoteCliente) {
       alert('Ha seleccionado "Cliente registrado", debe seleccionar obligatoriamente un cliente para este lote.');
       return;
     }
-
-    const originalItem = originalGarantiaLotes.find(
-      (orig) => String(orig.idLote) === String(targetLote.idLote)
-    );
-    const originalHa = originalItem ? Number(originalItem.hectareas) || 0 : 0;
-    const rawDisp =
-      targetLote.hectareasDisponibles !== undefined && targetLote.hectareasDisponibles !== null
-        ? targetLote.hectareasDisponibles
-        : targetLote.hectareas || 0;
-    const disp = rawDisp + originalHa;
 
     const gTipo = targetLoteGarantiaCon;
     const gNombre =
@@ -188,13 +227,16 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
       gTipo === 'Cliente' && targetLoteCliente ? targetLoteCliente.cuenta : undefined;
 
     const rel: GarantiaLoteRelacion = {
-      idLote: targetLote.idLote,
-      numeroLote: targetLote.numeroLote,
+      idGarantia: idGarantiaActual || '',
+      idLote: targetLoteDispInfo?.idLote || targetLote.idLote,
+      numeroLote: targetLoteDispInfo?.numeroLote || targetLote.numeroLote,
       hectareas: haNum,
-      hectareasTotales: targetLote.hectareas,
+      hectareasTotales: targetLoteDispInfo?.hectareasTotales ?? targetLote.hectareas,
       hectareasDisponibles: disp,
-      propietario: targetLote.propietario,
-      cuentaPropietario: targetLote.cuentaPropietario,
+      hectareasMaxPermitidas: disp,
+      hectareasEnOtrasGarantias: targetLoteDispInfo?.hectareasEnOtrasGarantias || 0,
+      propietario: targetLoteDispInfo?.propietario || targetLote.propietario,
+      cuentaPropietario: targetLoteDispInfo?.cuentaPropietario ?? targetLote.cuentaPropietario,
       ubicacion: targetLote.ubicacion,
       encargado: targetLote.encargado,
       garantiaConTipo: gTipo,
@@ -204,6 +246,7 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
 
     onSelectLote(rel);
     setTargetLote(null);
+    setTargetLoteDispInfo(null);
     setTargetLoteHa(0);
     setSearchTerm('');
     onClose();
@@ -388,23 +431,31 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
         {/* Formulario de detalle del lote seleccionado */}
         {targetLote && (
           <div className="p-3 bg-emerald-50/60 border-t border-emerald-200 space-y-2 text-xs">
-            <div className="font-bold text-emerald-950 flex items-center justify-between">
+            <div className="font-bold text-emerald-950 flex items-center justify-between flex-wrap gap-2">
               <span>
                 Configurar compromiso: Lote {targetLote.numeroLote} ({targetLote.propietario})
               </span>
-              <span className="text-[11px] text-emerald-800 font-mono">
-                {(() => {
-                  const orig = originalGarantiaLotes.find(
-                    (o) => String(o.idLote) === String(targetLote.idLote)
-                  );
-                  const oHa = orig ? Number(orig.hectareas) || 0 : 0;
-                  const rawDisp =
-                    targetLote.hectareasDisponibles !== undefined && targetLote.hectareasDisponibles !== null
-                      ? targetLote.hectareasDisponibles
-                      : targetLote.hectareas || 0;
-                  return `Disponible: ${formatHectareas(rawDisp + oHa)}`;
-                })()}
-              </span>
+              <div className="flex items-center gap-2 text-[11px]">
+                {isResolvingDisp ? (
+                  <span className="text-slate-500 italic flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Verificando disponibilidad...
+                  </span>
+                ) : (
+                  <>
+                    <span className="text-slate-600">
+                      Total: <strong>{formatHectareas(targetLoteDispInfo?.hectareasTotales ?? targetLote.hectareas)} ha</strong>
+                    </span>
+                    {targetLoteDispInfo && targetLoteDispInfo.hectareasEnOtrasGarantias > 0 && (
+                      <span className="text-purple-800 bg-purple-100 px-1.5 py-0.5 rounded font-bold border border-purple-200">
+                        Otras garantías: {formatHectareas(targetLoteDispInfo.hectareasEnOtrasGarantias)} ha
+                      </span>
+                    )}
+                    <span className="font-bold text-emerald-900 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300 font-mono">
+                      Disponible: {formatHectareas(targetLoteDispInfo?.hectareasDisponiblesParaEstaGarantia ?? targetLote.hectareasDisponibles ?? targetLote.hectareas)} ha
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="space-y-3">

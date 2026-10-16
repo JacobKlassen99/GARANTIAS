@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Save,
@@ -26,11 +26,15 @@ import {
   getClientes,
   getLotes,
   getBienes,
+  buscarLotes,
+  obtenerLotePorId,
+  obtenerDisponibilidadLote,
 } from '../../services/backend';
 import { ClientSearchAutocomplete } from './ClientSearchAutocomplete';
 import { SeleccionarLoteModal } from './SeleccionarLoteModal';
 import { SeleccionarBienModal } from './SeleccionarBienModal';
 import { formatHectareas, formatPropietario, parseDecimal } from '../../utils/textSearch';
+import { analizarAcreedoresItems } from '../../utils/acreedores';
 
 interface EditarGarantiaModalProps {
   idGarantia: string;
@@ -70,7 +74,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
   // Modales de selección unificados
   const [isAddingLote, setIsAddingLote] = useState(false);
   const [isAddingBien, setIsAddingBien] = useState(false);
-  const [originalLotes, setOriginalLotes] = useState<{ idLote: string | number; hectareas: number }[]>([]);
+  const [originalLotes, setOriginalLotes] = useState<{ idLote: string | number; numeroLote?: string; hectareas: number }[]>([]);
   const [originalBienIds, setOriginalBienIds] = useState<(string | number)[]>([]);
 
   useEffect(() => {
@@ -80,7 +84,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
       setErrorMessage(null);
       try {
         const [garantiaFull, cRes, lRes, bRes] = await Promise.all([
-          obtenerGarantiaCompleta(idGarantia),
+          obtenerGarantiaCompleta(idGarantia, false),
           getClientes({ page: 1, pageSize: 1000 }),
           getLotes({ page: 1, pageSize: 1000 }),
           getBienes({ page: 1, pageSize: 1000 }),
@@ -109,40 +113,226 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
             ci: '',
           });
 
-          const gTipo = garantiaFull.garantiaConTipo || 'Farmer Rechnung';
-          setGarantiaConTipo(gTipo);
-          if (gTipo === 'Cliente' && garantiaFull.garantiaConCuenta) {
-            setSelectedGarantiaCliente({
-              cuenta: garantiaFull.garantiaConCuenta,
-              nombre: garantiaFull.garantiaConNombre,
-              ci: '',
-            });
+          // Determinar de forma segura y precisa el acreedor general (garantiaCon)
+          const rawTipo = (garantiaFull.garantiaConTipo || '').trim();
+          const rawCuenta = String(garantiaFull.garantiaConCuenta || '').trim();
+          const rawNombre = (garantiaFull.garantiaConNombre || '').trim();
+          const prestatarioCuenta = String(garantiaFull.cuentaPrestatario || '').trim();
+
+          let resolvedTipo: TipoGarantiaCon = 'Farmer Rechnung';
+          let resolvedCliente: Cliente | null = null;
+
+          if (rawNombre === 'Farmer Rechnung' || rawTipo === 'Farmer Rechnung' || rawNombre.includes('Farmer')) {
+            resolvedTipo = 'Farmer Rechnung';
+          } else if (rawNombre === 'Campo Grande' || rawTipo === 'Campo Grande' || rawNombre.includes('Campo')) {
+            resolvedTipo = 'Campo Grande';
+          } else if (rawCuenta && rawCuenta !== prestatarioCuenta) {
+            const matchedClient = cList.find((c) => String(c.cuenta).trim() === rawCuenta);
+            if (matchedClient) {
+              resolvedTipo = 'Cliente';
+              resolvedCliente = matchedClient;
+            } else {
+              resolvedTipo = 'Cliente';
+              resolvedCliente = {
+                cuenta: rawCuenta,
+                nombre: rawNombre || `Cliente ${rawCuenta}`,
+                ci: '',
+              };
+            }
+          } else if (rawNombre && rawNombre !== 'Clientes Particulares Múltiples') {
+            const matchedByName = cList.find((c) => c.nombre.toLowerCase().trim() === rawNombre.toLowerCase());
+            if (matchedByName) {
+              resolvedTipo = 'Cliente';
+              resolvedCliente = matchedByName;
+            } else if (rawNombre.includes('Campo')) {
+              resolvedTipo = 'Campo Grande';
+            } else {
+              resolvedTipo = 'Farmer Rechnung';
+            }
+          } else {
+            // Fallback para modalidad múltiple sin cuenta asignada
+            const rawLotesList = Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : [];
+            const rawBienesList = Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : [];
+            const primerLote = rawLotesList[0];
+            const primerBien = rawBienesList[0];
+            const pTipo = primerLote?.garantiaConTipo || primerBien?.garantiaConTipo;
+            const pNombre = primerLote?.garantiaConNombre || primerBien?.garantiaConNombre;
+
+            if (pTipo === 'Campo Grande' || pNombre === 'Campo Grande') {
+              resolvedTipo = 'Campo Grande';
+            } else if (pTipo === 'Farmer Rechnung' || pNombre === 'Farmer Rechnung') {
+              resolvedTipo = 'Farmer Rechnung';
+            } else if (pNombre && pNombre !== 'Clientes Particulares Múltiples') {
+              const matchedClient = cList.find((c) => `${c.cuenta} — ${c.nombre}` === pNombre || c.nombre === pNombre);
+              if (matchedClient) {
+                resolvedTipo = 'Cliente';
+                resolvedCliente = matchedClient;
+              } else {
+                resolvedTipo = 'Farmer Rechnung';
+              }
+            } else {
+              resolvedTipo = 'Farmer Rechnung';
+            }
           }
+
+          setGarantiaConTipo(resolvedTipo);
+          setSelectedGarantiaCliente(resolvedCliente);
 
           setObservacion(garantiaFull.observacion || '');
 
           const rawLotes = Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : [];
-          setOriginalLotes(
-            rawLotes.map((l) => ({ idLote: l.idLote, hectareas: Number(l.hectareas) || 0 }))
+
+          // Correlacionar lotes con la base de datos real (hoja lotes) para obtener ID Lote real y N.º de Lote
+          const lotesEnriquecidos = await Promise.all(
+            rawLotes.map(async (lote) => {
+              let masterLote = lList.find((l) => {
+                const matchId = lote.idLote && String(l.idLote).trim().toLowerCase() === String(lote.idLote).trim().toLowerCase();
+                const matchNum = lote.numeroLote && String(l.numeroLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase();
+                const matchCross1 = lote.idLote && String(l.numeroLote).trim().toLowerCase() === String(lote.idLote).trim().toLowerCase();
+                const matchCross2 = lote.numeroLote && String(l.idLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase();
+                return matchId || matchNum || matchCross1 || matchCross2;
+              });
+
+              if (!masterLote && (lote.numeroLote || lote.idLote)) {
+                if (lote.idLote) {
+                  masterLote = (await obtenerLotePorId(String(lote.idLote)).catch(() => null)) || undefined;
+                }
+                if (!masterLote && lote.numeroLote) {
+                  const found = await buscarLotes(String(lote.numeroLote), true).catch(() => []);
+                  masterLote = found.find((l) =>
+                    String(l.numeroLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase() ||
+                    String(l.idLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase()
+                  );
+                }
+              }
+
+              const officialId = masterLote ? masterLote.idLote : lote.idLote;
+              const officialNumero = masterLote ? masterLote.numeroLote : lote.numeroLote;
+              const officialHaTotales = masterLote ? masterLote.hectareas : (lote.hectareasTotales || lote.hectareas);
+              const cta = lote.cuentaPropietario ?? masterLote?.cuentaPropietario ?? '';
+              const prop = lote.propietario || masterLote?.propietario || '';
+
+              // Obtener disponibilidad real de este lote para esta garantía
+              let dispParaEsta = officialHaTotales;
+              let haEnOtras = 0;
+              try {
+                const dispInfo = await obtenerDisponibilidadLote(
+                  {
+                    idLote: officialId,
+                    numeroLote: officialNumero,
+                    hectareas: officialHaTotales,
+                    cuentaPropietario: cta,
+                    propietario: prop,
+                  },
+                  idGarantia
+                );
+                dispParaEsta = dispInfo.hectareasDisponiblesParaEstaGarantia;
+                haEnOtras = dispInfo.hectareasEnOtrasGarantias;
+              } catch (e) {
+                console.warn('Error obteniendo disponibilidad para lote', officialNumero, e);
+              }
+
+              let itemTipo: TipoGarantiaCon = 'Farmer Rechnung';
+              let itemCuenta: string = '';
+              let itemNombre = 'Farmer Rechnung';
+
+              const lTipo = (lote.garantiaConTipo || '').trim();
+              const lNombre = (lote.garantiaConNombre || '').trim();
+              const lCuenta = String(lote.garantiaConCuenta || '').trim();
+
+              if (lTipo === 'Farmer Rechnung' || lNombre === 'Farmer Rechnung' || lNombre.includes('Farmer')) {
+                itemTipo = 'Farmer Rechnung';
+                itemCuenta = '';
+                itemNombre = 'Farmer Rechnung';
+              } else if (lTipo === 'Campo Grande' || lNombre === 'Campo Grande' || lNombre.includes('Campo')) {
+                itemTipo = 'Campo Grande';
+                itemCuenta = '';
+                itemNombre = 'Campo Grande';
+              } else if (lTipo === 'Cliente' || lCuenta) {
+                itemTipo = 'Cliente';
+                itemCuenta = lCuenta;
+                const matched = cList.find((c) => String(c.cuenta).trim() === lCuenta);
+                itemNombre = matched ? `${matched.cuenta} — ${matched.nombre}` : (lNombre || (lCuenta ? `Cliente ${lCuenta}` : 'Cliente'));
+              } else {
+                itemTipo = 'Farmer Rechnung';
+                itemCuenta = '';
+                itemNombre = 'Farmer Rechnung';
+              }
+
+              return {
+                ...lote,
+                idLote: officialId,
+                numeroLote: officialNumero,
+                hectareas: Number(lote.hectareas) || 0,
+                hectareasTotales: officialHaTotales,
+                hectareasDisponibles: dispParaEsta,
+                hectareasMaxPermitidas: dispParaEsta,
+                hectareasEnOtrasGarantias: haEnOtras,
+                propietario: prop,
+                cuentaPropietario: cta,
+                garantiaConTipo: itemTipo,
+                garantiaConCuenta: itemCuenta,
+                garantiaConNombre: itemNombre,
+              };
+            })
           );
-          const lotesEnriquecidos = rawLotes.map((lote) => {
-            const masterLote = lList.find((l) => String(l.idLote) === String(lote.idLote));
-            return {
-              ...lote,
-              propietario: lote.propietario || masterLote?.propietario || '',
-              cuentaPropietario: lote.cuentaPropietario ?? masterLote?.cuentaPropietario ?? '',
-            };
-          });
+
+          // Verificar si alguna relación no tiene hectáreas válidas
+          const loteSinHaValidas = lotesEnriquecidos.find((l) => l.hectareasIndeterminadas || Number(l.hectareas) <= 0);
+          if (loteSinHaValidas) {
+            setErrorMessage(
+              `No se pudieron determinar las hectáreas guardadas en garantia_lotes para el lote ${loteSinHaValidas.numeroLote || loteSinHaValidas.idLote}. Para proteger los datos reales, se ha bloqueado el guardado.`
+            );
+          }
+
+          setOriginalLotes(
+            lotesEnriquecidos.map((l) => ({
+              idLote: l.idLote,
+              numeroLote: l.numeroLote,
+              hectareas: Number(l.hectareas) || 0,
+            }))
+          );
           setLotes(lotesEnriquecidos);
 
           const rawBienes = Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : [];
           setOriginalBienIds(rawBienes.map((b) => b.idBien));
           const bienesEnriquecidos = rawBienes.map((bien) => {
             const masterBien = bList.find((b) => String(b.idBien) === String(bien.idBien));
+
+            let itemTipo: TipoGarantiaCon = 'Farmer Rechnung';
+            let itemCuenta: string = '';
+            let itemNombre = 'Farmer Rechnung';
+
+            const bTipo = (bien.garantiaConTipo || '').trim();
+            const bNombre = (bien.garantiaConNombre || '').trim();
+            const bCuenta = String(bien.garantiaConCuenta || '').trim();
+
+            if (bTipo === 'Farmer Rechnung' || bNombre === 'Farmer Rechnung' || bNombre.includes('Farmer')) {
+              itemTipo = 'Farmer Rechnung';
+              itemCuenta = '';
+              itemNombre = 'Farmer Rechnung';
+            } else if (bTipo === 'Campo Grande' || bNombre === 'Campo Grande' || bNombre.includes('Campo')) {
+              itemTipo = 'Campo Grande';
+              itemCuenta = '';
+              itemNombre = 'Campo Grande';
+            } else if (bTipo === 'Cliente' || bCuenta) {
+              itemTipo = 'Cliente';
+              itemCuenta = bCuenta;
+              const matched = cList.find((c) => String(c.cuenta).trim() === bCuenta);
+              itemNombre = matched ? `${matched.cuenta} — ${matched.nombre}` : (bNombre || (bCuenta ? `Cliente ${bCuenta}` : 'Cliente'));
+            } else {
+              itemTipo = 'Farmer Rechnung';
+              itemCuenta = '';
+              itemNombre = 'Farmer Rechnung';
+            }
+
             return {
               ...bien,
               propietario: bien.propietario || masterBien?.propietario || '',
               cuentaPropietario: bien.cuentaPropietario ?? masterBien?.cuentaPropietario ?? '',
+              garantiaConTipo: itemTipo,
+              garantiaConCuenta: itemCuenta,
+              garantiaConNombre: itemNombre,
             };
           });
           setBienes(bienesEnriquecidos);
@@ -187,6 +377,98 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
     ]);
   };
 
+  // Analizar acreedores en todos los ítems actuales (lotes y bienes)
+  const resumenAcreedores = useMemo(() => {
+    return analizarAcreedoresItems(lotes, bienes);
+  }, [lotes, bienes]);
+
+  // Determinar qué botón visual debe aparecer como seleccionado en la cabecera
+  const activeAcreedorTipo: TipoGarantiaCon | 'Multiple' = useMemo(() => {
+    if (modalidad === 'Múltiple') {
+      if (resumenAcreedores.esMultiple) {
+        return 'Multiple';
+      }
+      if (resumenAcreedores.tieneItems && resumenAcreedores.acreedorUnico) {
+        return resumenAcreedores.acreedorUnico.tipo;
+      }
+    }
+    return garantiaConTipo;
+  }, [modalidad, resumenAcreedores, garantiaConTipo]);
+
+  // Sincronizar automáticamente el cliente del selector superior si todos los ítems comparten un único cliente
+  useEffect(() => {
+    if (
+      modalidad === 'Múltiple' &&
+      resumenAcreedores.tieneItems &&
+      !resumenAcreedores.esMultiple &&
+      resumenAcreedores.acreedorUnico?.tipo === 'Cliente'
+    ) {
+      const cta = resumenAcreedores.acreedorUnico.cuenta;
+      if (cta && String(selectedGarantiaCliente?.cuenta) !== String(cta)) {
+        const found = clientesList.find((c) => String(c.cuenta).trim() === String(cta).trim());
+        if (found) {
+          setSelectedGarantiaCliente(found);
+        } else {
+          setSelectedGarantiaCliente({
+            cuenta: cta,
+            nombre: resumenAcreedores.acreedorUnico.nombre || `Cliente ${cta}`,
+            ci: '',
+          });
+        }
+      }
+    }
+  }, [modalidad, resumenAcreedores, clientesList]);
+
+  const handleSelectHeaderCreditor = (tipo: TipoGarantiaCon) => {
+    setGarantiaConTipo(tipo);
+    if (tipo !== 'Cliente') {
+      setSelectedGarantiaCliente(null);
+    }
+    // Si la modalidad es Múltiple y todos los ítems tenían un único acreedor, permitir actualizar todos al nuevo tipo
+    if (modalidad === 'Múltiple' && lotes.length + bienes.length > 0 && !resumenAcreedores.esMultiple) {
+      setLotes((prev) =>
+        prev.map((l) => ({
+          ...l,
+          garantiaConTipo: tipo,
+          garantiaConCuenta: tipo === 'Cliente' ? (selectedGarantiaCliente ? String(selectedGarantiaCliente.cuenta) : '') : '',
+          garantiaConNombre: tipo === 'Cliente' ? (selectedGarantiaCliente ? `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}` : '') : tipo,
+        }))
+      );
+      setBienes((prev) =>
+        prev.map((b) => ({
+          ...b,
+          garantiaConTipo: tipo,
+          garantiaConCuenta: tipo === 'Cliente' ? (selectedGarantiaCliente ? String(selectedGarantiaCliente.cuenta) : '') : '',
+          garantiaConNombre: tipo === 'Cliente' ? (selectedGarantiaCliente ? `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}` : '') : tipo,
+        }))
+      );
+    }
+  };
+
+  const handleSelectHeaderClient = (client: Cliente | null) => {
+    setSelectedGarantiaCliente(client);
+    if (modalidad === 'Múltiple' && client && !resumenAcreedores.esMultiple) {
+      const cta = String(client.cuenta);
+      const nom = `${client.cuenta} — ${client.nombre}`;
+      setLotes((prev) =>
+        prev.map((l) => ({
+          ...l,
+          garantiaConTipo: 'Cliente',
+          garantiaConCuenta: cta,
+          garantiaConNombre: nom,
+        }))
+      );
+      setBienes((prev) =>
+        prev.map((b) => ({
+          ...b,
+          garantiaConTipo: 'Cliente',
+          garantiaConCuenta: cta,
+          garantiaConNombre: nom,
+        }))
+      );
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -199,6 +481,51 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
     if (lotes.length === 0 && bienes.length === 0) {
       setErrorMessage('Debe contar con al menos un lote o bien en garantía.');
       return;
+    }
+
+    if (modalidad === 'Simple' && garantiaConTipo === 'Cliente') {
+      if (!selectedGarantiaCliente) {
+        setErrorMessage('Ha seleccionado "Cliente registrado" como acreedor, debe especificar el cliente.');
+        return;
+      }
+      if (String(selectedGarantiaCliente.cuenta).trim() === String(selectedPrestatario.cuenta).trim()) {
+        setErrorMessage('El acreedor (Garantía con) no puede ser la misma cuenta del Prestatario.');
+        return;
+      }
+    }
+
+    for (const l of lotes) {
+      const haVal = Number(l.hectareas) || 0;
+      if (l.hectareasMaxPermitidas !== undefined && haVal > l.hectareasMaxPermitidas + 1e-6) {
+        const enOtras = l.hectareasEnOtrasGarantias ? ` (${formatHectareas(l.hectareasEnOtrasGarantias)} ha comprometidas en otra garantía)` : '';
+        setErrorMessage(
+          `El lote ${l.numeroLote || l.idLote} solo tiene ${formatHectareas(l.hectareasMaxPermitidas)} ha disponibles para esta garantía${enOtras}.`
+        );
+        return;
+      }
+      if (l.garantiaConTipo === 'Cliente') {
+        if (!l.garantiaConCuenta || !String(l.garantiaConCuenta).trim()) {
+          setErrorMessage(`El lote ${l.numeroLote || l.idLote} tiene acreedor Cliente sin número de cuenta`);
+          return;
+        }
+        if (String(l.garantiaConCuenta).trim() === String(selectedPrestatario.cuenta).trim()) {
+          setErrorMessage(`El lote ${l.numeroLote || l.idLote} tiene como acreedor la misma cuenta del Prestatario. Seleccione un acreedor válido.`);
+          return;
+        }
+      }
+    }
+
+    for (const b of bienes) {
+      if (b.garantiaConTipo === 'Cliente') {
+        if (!b.garantiaConCuenta || !String(b.garantiaConCuenta).trim()) {
+          setErrorMessage(`El bien ${b.numeroPoliza || b.idBien} tiene acreedor Cliente sin número de cuenta`);
+          return;
+        }
+        if (String(b.garantiaConCuenta).trim() === String(selectedPrestatario.cuenta).trim()) {
+          setErrorMessage(`El bien ${b.numeroPoliza || b.idBien} tiene como acreedor la misma cuenta del Prestatario. Seleccione un acreedor válido.`);
+          return;
+        }
+      }
     }
 
     const gNombre =
@@ -262,6 +589,50 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
 
     setIsSaving(true);
     try {
+      // Determinar la cabecera técnica
+      let headerTipo: TipoGarantiaCon = 'Farmer Rechnung';
+      let headerCuenta: string | undefined = undefined;
+      let headerNombre = 'Farmer Rechnung';
+
+      if (modalidad === 'Simple') {
+        if (garantiaConTipo === 'Campo Grande') {
+          headerTipo = 'Campo Grande';
+          headerCuenta = undefined;
+          headerNombre = 'Campo Grande';
+        } else if (garantiaConTipo === 'Cliente' && selectedGarantiaCliente?.cuenta) {
+          headerTipo = 'Cliente';
+          headerCuenta = String(selectedGarantiaCliente.cuenta);
+          headerNombre = `${selectedGarantiaCliente.cuenta} — ${selectedGarantiaCliente.nombre}`;
+        } else {
+          headerTipo = 'Farmer Rechnung';
+          headerCuenta = undefined;
+          headerNombre = 'Farmer Rechnung';
+        }
+      } else {
+        // Modalidad Múltiple
+        if (resumenAcreedores.tieneItems && !resumenAcreedores.esMultiple && resumenAcreedores.acreedorUnico) {
+          if (resumenAcreedores.acreedorUnico.tipo === 'Campo Grande') {
+            headerTipo = 'Campo Grande';
+            headerCuenta = undefined;
+            headerNombre = 'Campo Grande';
+          } else if (resumenAcreedores.acreedorUnico.tipo === 'Cliente' && resumenAcreedores.acreedorUnico.cuenta) {
+            headerTipo = 'Cliente';
+            headerCuenta = resumenAcreedores.acreedorUnico.cuenta;
+            headerNombre = resumenAcreedores.acreedorUnico.nombre || `Cliente ${resumenAcreedores.acreedorUnico.cuenta}`;
+          } else {
+            headerTipo = 'Farmer Rechnung';
+            headerCuenta = undefined;
+            headerNombre = 'Farmer Rechnung';
+          }
+        } else {
+          // Múltiples acreedores diferentes: la cabecera técnica es una institución real (Farmer Rechnung con cuenta vacía)
+          // NUNCA enviar 'Cliente' con cuenta vacía a Apps Script
+          headerTipo = 'Farmer Rechnung';
+          headerCuenta = undefined;
+          headerNombre = 'Farmer Rechnung';
+        }
+      }
+
       const payload: Partial<Garantia> = {
         idGarantia,
         numeroSolicitud: numeroSolicitud.trim(),
@@ -271,9 +642,9 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         propietario: mainPropNombre,
         cuentaPrestatario: selectedPrestatario.cuenta,
         prestatario: selectedPrestatario.nombre,
-        garantiaConTipo: modalidad === 'Múltiple' ? 'Cliente' : garantiaConTipo,
-        garantiaConCuenta: modalidad === 'Múltiple' ? undefined : gCuenta,
-        garantiaConNombre: modalidad === 'Múltiple' ? 'Clientes Particulares Múltiples' : gNombre,
+        garantiaConTipo: headerTipo,
+        garantiaConCuenta: headerCuenta,
+        garantiaConNombre: headerNombre,
         tipoGarantia: tipoGarantiaCalculado,
         modalidad,
         observacion: observacion.trim(),
@@ -434,33 +805,65 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
               <div className="pt-2">
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
                   {modalidad === 'Múltiple'
-                    ? 'Seleccione el acreedor por defecto (en modalidad múltiple, cada elemento puede personalizarse):'
+                    ? resumenAcreedores.esMultiple
+                      ? 'Acreedor de la Garantía (Múltiples asignaciones individuales):'
+                      : 'Seleccione el acreedor por defecto (en modalidad múltiple, cada elemento puede personalizarse):'
                     : 'Garantía Constituida Con'}
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => (
+                <div
+                  className={`grid ${
+                    modalidad === 'Múltiple' && resumenAcreedores.esMultiple
+                      ? 'grid-cols-2 sm:grid-cols-4'
+                      : 'grid-cols-3'
+                  } gap-2`}
+                >
+                  {(['Farmer Rechnung', 'Campo Grande', 'Cliente'] as TipoGarantiaCon[]).map((tipo) => {
+                    const isDisabled = modalidad === 'Múltiple' && resumenAcreedores.esMultiple;
+                    const isSelected = !isDisabled && activeAcreedorTipo === tipo;
+                    return (
+                      <button
+                        key={tipo}
+                        type="button"
+                        disabled={isDisabled}
+                        onClick={() => handleSelectHeaderCreditor(tipo)}
+                        className={`py-1.5 px-2 text-xs font-semibold rounded border transition text-center ${
+                          isDisabled
+                            ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
+                            : isSelected
+                            ? 'bg-emerald-800 text-white border-emerald-900 shadow-2xs cursor-pointer'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 cursor-pointer'
+                        }`}
+                      >
+                        {tipo === 'Cliente' ? 'Cliente registrado' : tipo}
+                      </button>
+                    );
+                  })}
+
+                  {modalidad === 'Múltiple' && resumenAcreedores.esMultiple && (
                     <button
-                      key={tipo}
                       type="button"
-                      onClick={() => setGarantiaConTipo(tipo)}
-                      className={`py-1.5 px-2 text-xs font-semibold rounded border transition text-center cursor-pointer ${
-                        garantiaConTipo === tipo
-                          ? 'bg-emerald-800 text-white border-emerald-900 shadow-2xs'
-                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                      }`}
+                      disabled
+                      className="py-1.5 px-2 text-xs font-bold rounded border transition text-center bg-emerald-800 text-white border-emerald-900 shadow-2xs cursor-default flex items-center justify-center gap-1"
                     >
-                      {tipo === 'Cliente' ? 'Cliente registrado' : tipo}
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Múltiples acreedores</span>
                     </button>
-                  ))}
+                  )}
                 </div>
 
-                {garantiaConTipo === 'Cliente' && (
+                {modalidad === 'Múltiple' && resumenAcreedores.esMultiple && (
+                  <p className="mt-1.5 text-[10px] text-slate-500 italic">
+                    Los ítems de esta garantía tienen diferentes acreedores asignados de forma individual. Modifique el acreedor directamente en cada fila si desea cambiarlo.
+                  </p>
+                )}
+
+                {(!resumenAcreedores.esMultiple || modalidad === 'Simple') && activeAcreedorTipo === 'Cliente' && (
                   <div className="pt-2">
                     <ClientSearchAutocomplete
                       label="Cliente Receptor de la Garantía"
                       clientesList={clientesList}
                       selectedCuenta={selectedGarantiaCliente?.cuenta}
-                      onSelect={setSelectedGarantiaCliente}
+                      onSelect={handleSelectHeaderClient}
                       required
                     />
                   </div>
@@ -517,22 +920,41 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
                           {formatPropietario(lote.propietario, lote.cuentaPropietario)}
                         </td>
                         <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-emerald-900">
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            value={lote.hectareas}
-                            onChange={(e) => {
-                              const val = parseDecimal(e.target.value);
-                              setLotes((prev) =>
-                                prev.map((item) =>
-                                  item.idLote === lote.idLote ? { ...item, hectareas: val } : item
-                                )
-                              );
-                            }}
-                            className="w-24 px-1.5 py-0.5 text-right font-mono border border-slate-300 rounded text-xs"
-                          />{' '}
-                          ha
+                          <div className="flex flex-col items-end">
+                            <div className="flex items-center gap-1 justify-end">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                max={lote.hectareasMaxPermitidas}
+                                value={lote.hectareas}
+                                onChange={(e) => {
+                                  const val = parseDecimal(e.target.value);
+                                  setLotes((prev) =>
+                                    prev.map((item) =>
+                                      item.idLote === lote.idLote ? { ...item, hectareas: val } : item
+                                    )
+                                  );
+                                }}
+                                className={`w-24 px-1.5 py-0.5 text-right font-mono border rounded text-xs ${
+                                  lote.hectareasMaxPermitidas !== undefined && Number(lote.hectareas) > lote.hectareasMaxPermitidas + 1e-6
+                                    ? 'border-red-500 bg-red-50 text-red-900 font-bold'
+                                    : 'border-slate-300'
+                                }`}
+                              />{' '}
+                              <span>ha</span>
+                            </div>
+                            {lote.hectareasMaxPermitidas !== undefined && (
+                              <div className="text-[10px] text-slate-500 font-sans mt-0.5 flex flex-col items-end">
+                                <span>Máx. disp: {formatHectareas(lote.hectareasMaxPermitidas)} ha</span>
+                                {lote.hectareasEnOtrasGarantias !== undefined && lote.hectareasEnOtrasGarantias > 0 && (
+                                  <span className="text-purple-700 font-medium">
+                                    ({formatHectareas(lote.hectareasEnOtrasGarantias)} ha en otra garantía)
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </td>
                         <td className="p-1.5 border-r border-slate-200 space-y-1">
                           <select
@@ -774,6 +1196,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
           defaultGarantiaConTipo={garantiaConTipo}
           defaultGarantiaCliente={selectedGarantiaCliente}
           availableLotes={availableLotes}
+          idGarantiaActual={idGarantia}
         />
 
         {/* MODAL SELECCIONAR BIEN */}

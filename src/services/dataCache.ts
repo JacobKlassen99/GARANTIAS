@@ -1,24 +1,25 @@
 /**
- * CACHÉ TEMPORAL EXCLUSIVAMENTE EN MEMORIA (JavaScript / React)
+ * CACHÉ TEMPORAL EXCLUSIVAMENTE EN MEMORIA RAM (JavaScript / React)
  * Registro de Garantía de Terrenos — Asoc. Civil "Colonia Chihuahua"
  *
- * REGLAS FUNDAMENTALES:
- * 1. NO se usa localStorage.
- * 2. NO se usa sessionStorage como base de datos.
- * 3. NO se usa IndexedDB.
- * 4. Google Sheets continúa siendo la ÚNICA fuente real de datos.
- * 5. Los datos cargados se mantienen en memoria viva mientras la aplicación siga abierta.
- * 6. La navegación entre módulos es instantánea una vez que los datos fueron consultados.
+ * REGLAS FUNDAMENTALES Y OBLIGATORIAS:
+ * 1. Google Sheets sigue siendo la ÚNICA base de datos y fuente real de verdad.
+ * 2. Google Apps Script sigue siendo el backend.
+ * 3. NO se usa localStorage ni sessionStorage como base de datos.
+ * 4. NO se usa IndexedDB.
+ * 5. La caché es estrictamente temporal y vive en memoria RAM mientras dure la sesión.
+ * 6. La navegación entre módulos es instantánea una vez que los datos fueron consultados o precargados.
+ * 7. Deduplica peticiones idénticas en vuelo (in-flight) para evitar consultas duplicadas al backend.
  */
 
-// Almacén en memoria volátil (desaparece al cerrar la pestaña o recargar)
+// Almacén principal en memoria RAM volátil (desaparece al cerrar la pestaña o recargar)
 const memoryCache = new Map<string, any>();
 
-// Promesas en vuelo para deduplicar peticiones idénticas concurrentes
+// Promesas en vuelo para deduplicar peticiones idénticas concurrentes al backend
 const inFlightRequests = new Map<string, Promise<any>>();
 
 /**
- * Deduplica peticiones idénticas en curso (evita duplicados por useEffect / React StrictMode)
+ * Deduplica peticiones idénticas en curso (evita duplicados por clics rápidos o renderizados simultáneos)
  */
 export async function fetchWithDeduplication<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
   if (inFlightRequests.has(key)) {
@@ -38,7 +39,21 @@ export async function fetchWithDeduplication<T>(key: string, fetcher: () => Prom
 }
 
 /**
- * Genera una clave única para almacenar resultados de consultas
+ * Comprueba si una petición con la clave dada está en curso
+ */
+export function isRequestInFlight(key: string): boolean {
+  return inFlightRequests.has(key);
+}
+
+/**
+ * Obtiene la promesa en vuelo si existe
+ */
+export function getInFlightRequest<T>(key: string): Promise<T> | undefined {
+  return inFlightRequests.get(key) as Promise<T> | undefined;
+}
+
+/**
+ * Genera una clave única normalizada para almacenar resultados de consultas
  */
 export function getCacheKey(namespace: string, params?: Record<string, any> | string): string {
   if (!params) return namespace;
@@ -55,7 +70,7 @@ export function getCacheKey(namespace: string, params?: Record<string, any> | st
 }
 
 /**
- * Obtiene un valor desde la caché en memoria
+ * Obtiene un valor desde la caché en memoria RAM
  */
 export function getFromMemoryCache<T>(namespace: string, params?: Record<string, any> | string): T | null {
   const key = getCacheKey(namespace, params);
@@ -66,7 +81,7 @@ export function getFromMemoryCache<T>(namespace: string, params?: Record<string,
 }
 
 /**
- * Guarda un valor en la caché en memoria
+ * Guarda un valor en la caché en memoria RAM
  */
 export function setToMemoryCache<T>(namespace: string, data: T, params?: Record<string, any> | string): void {
   const key = getCacheKey(namespace, params);
@@ -74,7 +89,15 @@ export function setToMemoryCache<T>(namespace: string, data: T, params?: Record<
 }
 
 /**
- * Comprueba si existe un valor en la caché en memoria
+ * Elimina una clave puntual o un subelemento de la caché en memoria RAM
+ */
+export function deleteFromMemoryCache(namespace: string, params?: Record<string, any> | string): void {
+  const key = getCacheKey(namespace, params);
+  memoryCache.delete(key);
+}
+
+/**
+ * Comprueba si existe un valor en la caché en memoria RAM
  */
 export function hasInMemoryCache(namespace: string, params?: Record<string, any> | string): boolean {
   const key = getCacheKey(namespace, params);
@@ -83,7 +106,7 @@ export function hasInMemoryCache(namespace: string, params?: Record<string, any>
 
 /**
  * Invalida selectivamente un módulo o grupo de módulos
- * Se llama cuando se crean, editan o eliminan registros
+ * Se llama cuando se crean, editan o eliminan registros en Google Sheets
  */
 export function invalidateMemoryCache(namespaces: string | string[]): void {
   const list = Array.isArray(namespaces) ? [...namespaces] : [namespaces];
@@ -101,15 +124,16 @@ export function invalidateMemoryCache(namespaces: string | string[]): void {
 }
 
 /**
- * Limpia toda la memoria (ej. al cerrar sesión)
+ * Limpia toda la memoria RAM (al cerrar sesión)
  */
 export function clearAllMemoryCache(): void {
   memoryCache.clear();
+  inFlightRequests.clear();
 }
 
 /**
  * Busca si ya existen elementos en caché para un módulo determinado
- * (reutiliza lotes, bienes o clientes ya cargados en cualquier vista previa)
+ * (reutiliza lotes, bienes, clientes o garantías ya cargados en cualquier consulta previa)
  */
 export function findAnyCachedData<T>(namespace: string): T[] | null {
   // Primero revisar clave directa 'all'
