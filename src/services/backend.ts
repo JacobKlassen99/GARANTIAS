@@ -1914,6 +1914,48 @@ export async function obtenerGarantiaCompleta(
   return base;
 }
 
+export function determinarTipoGarantiaValido(
+  lotes?: any[] | null,
+  bienes?: any[] | null,
+  fallbackTipo?: string
+): 'Terreno' | 'Vehículo' | 'Maquinaria' | 'Otro bien' {
+  const hasLotes = Array.isArray(lotes) && lotes.length > 0;
+  const hasBienes = Array.isArray(bienes) && bienes.length > 0;
+
+  // REGLA 3: Si contiene al menos un terreno/lote (incluso si se combina con bienes), enviar 'Terreno'
+  if (hasLotes) {
+    return 'Terreno';
+  }
+
+  // REGLA 4: Si solo contiene bienes (sin lotes), clasificar según los bienes
+  if (hasBienes) {
+    const tieneMaquinaria = bienes.some((b) => {
+      const t = (b?.tipoBien || b?.['Tipo de Bien'] || '').toString().trim().toLowerCase();
+      return t === 'maquinaria';
+    });
+    if (tieneMaquinaria) return 'Maquinaria';
+
+    const tieneVehiculo = bienes.some((b) => {
+      const t = (b?.tipoBien || b?.['Tipo de Bien'] || '').toString().trim().toLowerCase();
+      return t === 'vehículo' || t === 'vehiculo';
+    });
+    if (tieneVehiculo) return 'Vehículo';
+
+    return 'Otro bien';
+  }
+
+  // Si no se pasaron listas de elementos, intentar normalizar el fallbackTipo
+  if (fallbackTipo) {
+    const clean = fallbackTipo.trim().toLowerCase();
+    if (clean === 'terreno' || clean === 'terrenos') return 'Terreno';
+    if (clean === 'vehículo' || clean === 'vehiculo') return 'Vehículo';
+    if (clean === 'maquinaria') return 'Maquinaria';
+    if (clean === 'otro bien' || clean === 'bien' || clean === 'bienes' || clean === 'implemento') return 'Otro bien';
+  }
+
+  return 'Terreno';
+}
+
 function resolveHeaderCuentaPropietario(
   cuentaProp: string | number | undefined,
   lotes?: Array<{ cuentaPropietario?: string | number }>,
@@ -2033,6 +2075,12 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
     garantia.cuentaPrestatario
   );
 
+  const safeTipoGarantia = determinarTipoGarantiaValido(
+    garantia.lotes,
+    garantia.bienes,
+    garantia.tipoGarantia
+  );
+
   const result = await callAppsScript('crearGarantia', {
     numeroSolicitud: garantia.numeroSolicitud || '',
     fecha: garantia.fecha,
@@ -2044,7 +2092,7 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
     garantiaConTipo: mainGarantiaConTipo,
     garantiaConCuenta: mainGarantiaConCuenta,
     garantiaConNombre: mainGarantiaConNombre,
-    tipoGarantia: garantia.tipoGarantia,
+    tipoGarantia: safeTipoGarantia,
     modalidad: garantia.modalidad || 'Simple',
     observacion: garantia.observacion || '',
     lotes: Array.isArray(garantia.lotes)
@@ -2071,14 +2119,15 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
           const isInst = itemTipo === 'Farmer Rechnung' || itemTipo === 'Campo Grande';
           const itemCuenta = isInst ? '' : (b.garantiaConCuenta || '');
           const itemNombre = isInst ? itemTipo : (b.garantiaConNombre || (itemTipo === 'Cliente' ? `Cliente ${itemCuenta}` : itemTipo));
+          const cleanIdBien = String(b.idBien || (b as any)['ID Bien'] || '').trim();
           return {
-            idBien: b.idBien,
-            numeroPoliza: b.numeroPoliza,
-            tipoBien: b.tipoBien,
+            idBien: cleanIdBien,
+            numeroPoliza: b.numeroPoliza || '',
+            tipoBien: b.tipoBien || 'Otro bien',
             valorGarantiaUSD: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
             valorEnGarantia: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
-            cuentaPropietario: b.cuentaPropietario || '',
-            propietario: b.propietario || '',
+            cuentaPropietario: b.cuentaPropietario !== undefined && b.cuentaPropietario !== null ? String(b.cuentaPropietario).trim() : '',
+            propietario: b.propietario ? String(b.propietario).trim() : '',
             garantiaConTipo: itemTipo,
             garantiaConCuenta: itemCuenta,
             garantiaConNombre: itemNombre,
@@ -2224,6 +2273,12 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
     garantia.cuentaPrestatario
   );
 
+  const safeTipoGarantia = determinarTipoGarantiaValido(
+    garantia.lotes,
+    garantia.bienes,
+    garantia.tipoGarantia
+  );
+
   const result = await callAppsScript('editarGarantia', {
     idGarantia: garantia.idGarantia,
     numeroSolicitud: garantia.numeroSolicitud || '',
@@ -2236,7 +2291,7 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
     garantiaConTipo: mainGarantiaConTipo,
     garantiaConCuenta: mainGarantiaConCuenta,
     garantiaConNombre: mainGarantiaConNombre,
-    tipoGarantia: garantia.tipoGarantia,
+    tipoGarantia: safeTipoGarantia,
     modalidad: garantia.modalidad || 'Simple',
     observacion: garantia.observacion || '',
     lotes: Array.isArray(garantia.lotes)
@@ -2263,14 +2318,15 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
           const isInst = itemTipo === 'Farmer Rechnung' || itemTipo === 'Campo Grande';
           const itemCuenta = isInst ? '' : (b.garantiaConCuenta || '');
           const itemNombre = isInst ? itemTipo : (b.garantiaConNombre || (itemTipo === 'Cliente' ? `Cliente ${itemCuenta}` : itemTipo));
+          const cleanIdBien = String(b.idBien || (b as any)['ID Bien'] || '').trim();
           return {
-            idBien: b.idBien,
-            numeroPoliza: b.numeroPoliza,
-            tipoBien: b.tipoBien,
+            idBien: cleanIdBien,
+            numeroPoliza: b.numeroPoliza || '',
+            tipoBien: b.tipoBien || 'Otro bien',
             valorGarantiaUSD: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
             valorEnGarantia: typeof b.valorGarantiaUSD === 'number' ? b.valorGarantiaUSD : Number(b.valorGarantiaUSD) || 0,
-            cuentaPropietario: b.cuentaPropietario || '',
-            propietario: b.propietario || '',
+            cuentaPropietario: b.cuentaPropietario !== undefined && b.cuentaPropietario !== null ? String(b.cuentaPropietario).trim() : '',
+            propietario: b.propietario ? String(b.propietario).trim() : '',
             garantiaConTipo: itemTipo,
             garantiaConCuenta: itemCuenta,
             garantiaConNombre: itemNombre,

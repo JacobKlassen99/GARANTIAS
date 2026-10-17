@@ -39,6 +39,7 @@ import {
   obtenerBienes,
   findAnyCachedData,
   getFromMemoryCache,
+  determinarTipoGarantiaValido,
 } from '../services/backend';
 import { ClientSearchAutocomplete } from '../components/common/ClientSearchAutocomplete';
 import { SeleccionarLoteModal } from '../components/common/SeleccionarLoteModal';
@@ -182,15 +183,11 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
     selectedLotes.some((l) => l.garantiaConTipo === 'Cliente') ||
     selectedBienes.some((b) => b.garantiaConTipo === 'Cliente');
 
-  // Tipo de garantía calculado
-  const tipoGarantiaCalculado =
-    selectedLotes.length > 0 && selectedBienes.length > 0
-      ? 'Terrenos y Bienes'
-      : selectedLotes.length > 0
-      ? 'Terreno'
-      : selectedBienes.length > 0
-      ? 'Bien'
-      : 'Sin elementos';
+  // Tipo de garantía calculado (compatible con backend Google Apps Script)
+  const tipoGarantiaCalculado = determinarTipoGarantiaValido(
+    selectedLotes,
+    selectedBienes
+  );
 
   // Manejo de Agregar Lote
   const handleSelectLoteForAdd = (lote: Lote) => {

@@ -29,6 +29,7 @@ import {
   buscarLotes,
   obtenerLotePorId,
   obtenerDisponibilidadLote,
+  determinarTipoGarantiaValido,
 } from '../../services/backend';
 import { ClientSearchAutocomplete } from './ClientSearchAutocomplete';
 import { SeleccionarLoteModal } from './SeleccionarLoteModal';
@@ -328,6 +329,7 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
 
             return {
               ...bien,
+              idBien: bien.idBien || masterBien?.idBien || '',
               propietario: bien.propietario || masterBien?.propietario || '',
               cuentaPropietario: bien.cuentaPropietario ?? masterBien?.cuentaPropietario ?? '',
               garantiaConTipo: itemTipo,
@@ -538,12 +540,11 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         ? selectedGarantiaCliente.cuenta
         : undefined;
 
-    const tipoGarantiaCalculado =
-      lotes.length > 0 && bienes.length > 0
-        ? 'Terrenos y Bienes'
-        : lotes.length > 0
-        ? 'Terreno'
-        : 'Bien';
+    const tipoGarantiaCalculado = determinarTipoGarantiaValido(
+      lotes,
+      bienes,
+      garantiaConTipo
+    );
 
     // Obtener consolidado de propietarios únicos a partir de los lotes y bienes
     const ownersMap = new Map<string, { cuenta: string | number; nombre: string }>();
