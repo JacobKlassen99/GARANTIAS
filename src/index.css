@@ -7,6 +7,11 @@
   }
 }
 
+/* Ocultar el portal de impresión en pantalla normal */
+#print-mount-root {
+  display: none !important;
+}
+
 /* Reglas de impresión para documentos oficiales de garantía (Carta / Letter) */
 @media print {
   @page {
@@ -14,39 +19,33 @@
     margin: 10mm 12mm 10mm 12mm;
   }
 
-  /* Ocultar absolutamente todos los elementos de la interfaz de la aplicación por defecto */
-  body * {
-    visibility: hidden !important;
+  /* Ocultar completamente la aplicación React (#root) y todos sus modales/mallas de la pantalla */
+  #root {
+    display: none !important;
   }
 
-  /* Hacer visible ÚNICAMENTE el documento oficial de garantía y sus elementos contenidos */
+  /* Mostrar de forma exclusiva el contenedor de impresión montado en body */
+  #print-mount-root {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
   #printable-official-document,
   #printable-official-document * {
     visibility: visible !important;
   }
 
-  /* Posicionar el documento oficial en la esquina superior izquierda de la hoja impresa */
-  #printable-official-document {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    box-shadow: none !important;
-    border: none !important;
-    background-color: #ffffff !important;
-    color: #000000 !important;
-    overflow: visible !important;
-    max-height: none !important;
-    display: block !important;
-  }
-
-  /* Reset del fondo y lienzo para evitar páginas en blanco o pergaminos */
+  /* Reset del fondo y lienzo de impresión */
   html,
-  body,
-  #root {
+  body {
     background: #ffffff !important;
     color: #000000 !important;
     overflow: visible !important;
@@ -59,19 +58,14 @@
     print-color-adjust: exact !important;
   }
 
-  /* Ocultar explícitamente menús, encabezados, botones y controles de la aplicación */
-  header,
-  aside,
-  nav,
-  main,
-  button,
-  .no-print,
-  .print\:hidden {
+  /* Ocultar explícitamente botones y controles no imprimibles */
+  #print-mount-root .no-print,
+  #print-mount-root .print\:hidden,
+  #print-mount-root button {
     display: none !important;
-    visibility: hidden !important;
   }
 
-  /* Evitar saltos de página dentro de filas de tablas y bloques de firmas */
+  /* Evitar saltos de página inapropiados en filas de tablas y bloques de firmas */
   tr,
   .avoid-break {
     page-break-inside: avoid !important;
