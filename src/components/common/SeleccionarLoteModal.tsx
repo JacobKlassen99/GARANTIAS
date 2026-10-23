@@ -20,6 +20,33 @@ export interface SeleccionarLoteModalProps {
   idGarantiaActual?: string;
 }
 
+function safeNormalizeString(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    const str = [obj.nombre, obj.cuenta, obj.idLote, obj.numeroLote]
+      .filter((v) => v !== null && v !== undefined)
+      .map((v) => String(v))
+      .join(' ');
+    if (str.trim()) {
+      return str
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    }
+  }
+  try {
+    return String(val)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
 export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
   isOpen,
   onClose,
@@ -81,16 +108,15 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
   // Filtrado instantáneo e in-memory en RAM
   const filteredLotes = useMemo(() => {
     if (!Array.isArray(internalAvailableLotes)) return [];
-    if (!searchTerm.trim()) return internalAvailableLotes;
+    if (!searchTerm || !searchTerm.trim()) return internalAvailableLotes;
 
-    const cleanQuery = searchTerm
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim();
+    const cleanQuery = safeNormalizeString(searchTerm);
+    if (!cleanQuery) return internalAvailableLotes;
+
+    const queryTokens = cleanQuery.split(/\s+/).filter(Boolean);
 
     return internalAvailableLotes.filter((lote) => {
-      if (!lote) return false;
+      if (!lote || typeof lote !== 'object') return false;
       const searchFields = [
         lote.numeroLote,
         lote.idLote,
@@ -100,14 +126,12 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
         lote.encargado,
         lote.cuentaEncargado,
       ];
-      return searchFields.some((field) => {
-        if (field === null || field === undefined) return false;
-        const cleanField = String(field)
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .toLowerCase();
-        return cleanField.includes(cleanQuery);
-      });
+      const combinedText = searchFields
+        .map((field) => safeNormalizeString(field))
+        .filter(Boolean)
+        .join(' ');
+
+      return queryTokens.every((token) => combinedText.includes(token));
     });
   }, [internalAvailableLotes, searchTerm]);
 

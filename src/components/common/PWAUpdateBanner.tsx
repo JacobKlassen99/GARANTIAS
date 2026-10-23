@@ -2,49 +2,53 @@ import React, { useState, useEffect } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw, X, AlertCircle } from 'lucide-react';
 
-export const PWAUpdateBanner: React.FC = () => {
+interface PWAUpdateBannerProps {
+  isFormEditing?: boolean;
+}
+
+export const PWAUpdateBanner: React.FC<PWAUpdateBannerProps> = ({ isFormEditing = false }) => {
   const {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
   } = useRegisterSW({
-    onRegisteredSW(swUrl, r) {
-      if (r) {
-        // Comprobar actualizaciones periódicamente cada 60 minutos y al volver a enfocar la pestaña
-        const interval = setInterval(() => {
-          r.update();
-        }, 60 * 60 * 1000);
-
-        const handleVisibilityChange = () => {
-          if (document.visibilityState === 'visible') {
-            r.update();
-          }
-        };
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-
-        return () => {
-          clearInterval(interval);
-          document.removeEventListener('visibilitychange', handleVisibilityChange);
-        };
-      }
+    onNeedReload() {
+      // OBLIGATORIO: Proveer onNeedReload evita que workbox llame automáticamente a window.location.reload()
+      // En su lugar, simplemente informamos de la actualización y dejamos que el usuario decida cuándo aplicarla.
+    },
+    onRegisteredSW(_swUrl, _registration) {
+      // El navegador maneja el ciclo de vida del Service Worker sin necesidad de forzar polling agresivo
+    },
+    onRegisterError(err) {
+      console.warn('[PWA] Service Worker no registrado:', err);
     },
   });
 
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    const isDismissed = sessionStorage.getItem('pwa_update_dismissed');
-    if (isDismissed === 'true') {
-      setDismissed(true);
-    }
+    try {
+      const isDismissed = sessionStorage.getItem('pwa_update_dismissed');
+      if (isDismissed === 'true') {
+        setDismissed(true);
+      }
+    } catch {}
   }, []);
 
   const handleDismiss = () => {
     setDismissed(true);
-    sessionStorage.setItem('pwa_update_dismissed', 'true');
+    try {
+      sessionStorage.setItem('pwa_update_dismissed', 'true');
+    } catch {}
     setNeedRefresh(false);
   };
 
   const handleUpdate = () => {
+    if (isFormEditing) {
+      const confirmUpdate = window.confirm(
+        'Actualmente tiene un formulario o edición en curso con posibles datos no guardados.\n\n¿Desea actualizar de todas formas? Se recomienda guardar sus cambios primero.'
+      );
+      if (!confirmUpdate) return;
+    }
     updateServiceWorker(true);
   };
 
@@ -61,27 +65,32 @@ export const PWAUpdateBanner: React.FC = () => {
           </div>
           <div>
             <h4 className="font-semibold text-sm sm:text-base">Nueva versión disponible</h4>
-            <p className="text-xs sm:text-sm text-emerald-200">Hay una actualización de la aplicación.</p>
+            <p className="text-xs sm:text-sm text-emerald-200">
+              Hay una actualización del sistema lista para aplicarse.
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
           <button
+            type="button"
             onClick={handleUpdate}
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white text-emerald-900 hover:bg-emerald-50 text-xs sm:text-sm font-semibold rounded-lg shadow transition active:scale-95"
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white text-emerald-900 hover:bg-emerald-50 text-xs sm:text-sm font-semibold rounded-lg shadow transition active:scale-95 cursor-pointer"
           >
-            <RefreshCw className="w-4 h-4 animate-spin" />
+            <RefreshCw className="w-4 h-4" />
             <span>Actualizar ahora</span>
           </button>
           <button
+            type="button"
             onClick={handleDismiss}
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center px-4 py-2 bg-emerald-800 text-emerald-100 hover:bg-emerald-700 text-xs sm:text-sm font-medium rounded-lg transition"
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center px-4 py-2 bg-emerald-800 text-emerald-100 hover:bg-emerald-700 text-xs sm:text-sm font-medium rounded-lg transition cursor-pointer"
           >
-            Descartar
+            Más tarde
           </button>
           <button
+            type="button"
             onClick={handleDismiss}
-            className="p-1.5 text-emerald-300 hover:text-white rounded-lg hover:bg-emerald-800 transition hidden sm:block"
-            title="Descartar"
+            className="p-1.5 text-emerald-300 hover:text-white rounded-lg hover:bg-emerald-800 transition hidden sm:block cursor-pointer"
+            title="Cerrar aviso"
           >
             <X className="w-5 h-5" />
           </button>

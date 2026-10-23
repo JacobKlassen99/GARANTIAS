@@ -106,9 +106,9 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
       const lower = clean.toLowerCase();
       const localMatches = effectiveClients.filter(
         (c) =>
-          String(c.cuenta).toLowerCase().includes(lower) ||
-          c.nombre.toLowerCase().includes(lower) ||
-          (c.ci && c.ci.toLowerCase().includes(lower))
+          (c.cuenta !== undefined && c.cuenta !== null && String(c.cuenta).toLowerCase().includes(lower)) ||
+          (c.nombre !== undefined && c.nombre !== null && String(c.nombre).toLowerCase().includes(lower)) ||
+          (c.ci !== undefined && c.ci !== null && String(c.ci).toLowerCase().includes(lower))
       );
       if (localMatches.length > 0) {
         setSuggestions(localMatches);
@@ -123,8 +123,8 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
       try {
         const results = await buscarClientes(clean);
         setSuggestions(results);
-        // Si el usuario escribió únicamente un número y no hay resultados
-        if (/^\d+$/.test(clean) && results.length === 0) {
+        // Si no hay resultados de búsqueda por texto, intentar consulta directa por cuenta (admite letras/números/guiones)
+        if (results.length === 0) {
           const direct = await obtenerClientePorCuenta(clean);
           if (direct) {
             setSuggestions([direct]);
@@ -176,58 +176,66 @@ export const ClientSearchAutocomplete: React.FC<ClientSearchAutocompleteProps> =
       return;
     }
 
-    // Si es solo número (ej: "112")
-    if (/^\d+$/.test(clean)) {
-      // Revisar primero en memoria
-      const local = effectiveClients.find((c) => String(c.cuenta).trim() === clean);
-      if (local) {
-        setInputText(formatClienteLabel(local.cuenta, local.nombre));
-        setAccountNotFound(false);
-        onSelect(local);
-        return;
-      }
-      try {
-        const match = await obtenerClientePorCuenta(clean);
-        if (match) {
-          setInputText(formatClienteLabel(match.cuenta, match.nombre));
+    // 1. Si tiene el formato "Cuenta — Nombre", extraer cuenta (admite códigos alfanuméricos como "269-A")
+    if (clean.includes('—')) {
+      const parts = clean.split('—');
+      const cuentaPart = parts[0].trim();
+      if (cuentaPart) {
+        const local = effectiveClients.find(
+          (c) => String(c.cuenta).trim().toLowerCase() === cuentaPart.toLowerCase()
+        );
+        if (local) {
           setAccountNotFound(false);
-          onSelect(match);
-        } else {
+          onSelect(local);
+          return;
+        }
+        try {
+          const match = await obtenerClientePorCuenta(cuentaPart);
+          if (match) {
+            setAccountNotFound(false);
+            onSelect(match);
+          } else {
+            setAccountNotFound(true);
+            onSelect(null);
+          }
+        } catch {
           setAccountNotFound(true);
           onSelect(null);
         }
-      } catch {
-        setAccountNotFound(true);
-        onSelect(null);
-      }
-      return;
-    }
-
-    // Si tiene el formato "Cuenta — Nombre", extraer cuenta
-    const matchParts = clean.match(/^(\d+)\s*—/);
-    if (matchParts && matchParts[1]) {
-      const cuentaNum = matchParts[1];
-      const local = effectiveClients.find((c) => String(c.cuenta).trim() === cuentaNum);
-      if (local) {
-        setAccountNotFound(false);
-        onSelect(local);
         return;
       }
-      const match = await obtenerClientePorCuenta(cuentaNum);
-      if (match) {
-        setAccountNotFound(false);
-        onSelect(match);
-      } else {
-        setAccountNotFound(true);
-        onSelect(null);
-      }
+    }
+
+    // 2. Si no tiene "—", revisar si coincide directamente con una cuenta existente (local o remota)
+    const local = effectiveClients.find(
+      (c) => String(c.cuenta).trim().toLowerCase() === clean.toLowerCase()
+    );
+    if (local) {
+      setInputText(formatClienteLabel(local.cuenta, local.nombre));
+      setAccountNotFound(false);
+      onSelect(local);
       return;
     }
 
-    // Si es texto libre y tenemos una sugerencia exacta
+    try {
+      const match = await obtenerClientePorCuenta(clean);
+      if (match) {
+        setInputText(formatClienteLabel(match.cuenta, match.nombre));
+        setAccountNotFound(false);
+        onSelect(match);
+        return;
+      }
+    } catch {
+      // Ignorar error y evaluar sugerencias
+    }
+
+    // 3. Si es texto libre (nombre) y tenemos una sugerencia exacta
     if (suggestions.length === 1) {
       const single = suggestions[0];
       handleSelectClient(single);
+    } else if (suggestions.length === 0) {
+      setAccountNotFound(true);
+      onSelect(null);
     }
   };
 

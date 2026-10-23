@@ -19,7 +19,10 @@ import {
 } from '../services/backend';
 import { ImpresionGarantia } from './ImpresionGarantia';
 import { VerBienesLotesModal } from '../components/common/VerBienesLotesModal';
-import { formatFecha, formatPropietario } from '../utils/textSearch';
+import {
+  formatFecha,
+  formatPropietario,
+} from '../utils/textSearch';
 import { NavSection } from '../components/layout/Sidebar';
 
 interface GarantiasLiberadasListProps {
@@ -63,8 +66,9 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
         sortDirection: 'desc',
       };
       const res = await listarGarantiasLiberadas(params, forceRefresh);
-      setGarantias(Array.isArray(res?.data) ? res.data : []);
-      setTotal(typeof res?.total === 'number' ? res.total : 0);
+      const items = Array.isArray(res?.data) ? res.data : [];
+      setGarantias(items);
+      setTotal(typeof res?.total === 'number' ? Math.max(res.total, items.length) : items.length);
       setHasLoadedOnce(true);
     } catch {
       if (garantias.length === 0) {
@@ -286,7 +290,7 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
                         </span>
                       </td>
                       <td className="py-1.5 px-3 border-r border-slate-100 whitespace-nowrap">
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                        <span className="inline-block px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                           {garantia.tipoGarantia || 'Terreno'}
                         </span>
                       </td>
@@ -411,7 +415,7 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
                 </div>
                 <div>
                   <span className="text-slate-500">Tipo:</span>{' '}
-                  <strong>{garantiaParaVer.tipoGarantia}</strong>
+                  <strong className="text-slate-900">{garantiaParaVer.tipoGarantia || 'Terreno'}</strong>
                 </div>
                 <div>
                   <span className="text-slate-500">Modalidad:</span>{' '}

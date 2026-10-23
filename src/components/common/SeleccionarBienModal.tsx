@@ -19,20 +19,53 @@ export interface SeleccionarBienModalProps {
 }
 
 /**
+ * Convierte cualquier valor (string, number, object, null, undefined) a un string limpio
+ * sin acentos, en minúsculas y sin espacios sobrantes.
+ */
+function safeNormalizeString(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    const str = [obj.nombre, obj.cuenta, obj.idBien, obj.numeroPoliza]
+      .filter((v) => v !== null && v !== undefined)
+      .map((v) => String(v))
+      .join(' ');
+    if (str.trim()) {
+      return str
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    }
+  }
+  try {
+    return String(val)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Función ultra-segura para comparar un bien con el término de búsqueda.
+ * Permite buscar por número de póliza, descripción, tipo de bien, marca, modelo,
+ * placa, propietario y número de cuenta del propietario.
  * Tolera acentos, mayúsculas/minúsculas, campos nulos/undefined o valores numéricos.
  */
 function matchesBienQuery(bien: Bien, query: string): boolean {
   if (!query || !query.trim()) return true;
-  if (!bien) return false;
+  if (!bien || typeof bien !== 'object') return false;
 
-  const cleanQuery = query
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
+  const cleanQuery = safeNormalizeString(query);
+  if (!cleanQuery) return true;
+
+  const queryTokens = cleanQuery.split(/\s+/).filter(Boolean);
 
   const searchFields = [
+    bien.idBien,
     bien.numeroPoliza,
     bien.descripcion,
     bien.tipoBien,
@@ -44,16 +77,15 @@ function matchesBienQuery(bien: Bien, query: string): boolean {
     bien.ubicacion,
     bien.encargado,
     bien.cuentaEncargado,
+    bien.estado,
   ];
 
-  return searchFields.some((field) => {
-    if (field === null || field === undefined) return false;
-    const cleanField = String(field)
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase();
-    return cleanField.includes(cleanQuery);
-  });
+  const combinedText = searchFields
+    .map((field) => safeNormalizeString(field))
+    .filter(Boolean)
+    .join(' ');
+
+  return queryTokens.every((token) => combinedText.includes(token));
 }
 
 export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
@@ -237,15 +269,24 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
               const isBlocked = bien.estado === 'Bloqueado';
               const isInactive = bien.estado === 'Inactivo';
 
+              const hasValidId = bien.idBien !== undefined && bien.idBien !== null && bien.idBien !== '';
+
               // Si pertenecía a esta garantía originalmente, no se considera ocupado por OTRA garantía
               const wasOriginallyInThisGarantia =
-                originalGarantiaBienIds.some((id) => String(id) === String(bien.idBien)) ||
-                (currentNumeroSolicitud && String(bien.solicitudGarantiaActiva) === String(currentNumeroSolicitud));
+                (hasValidId &&
+                  originalGarantiaBienIds.some(
+                    (id) => id !== undefined && id !== null && id !== '' && String(id) === String(bien.idBien)
+                  )) ||
+                (Boolean(currentNumeroSolicitud) &&
+                  Boolean(bien.solicitudGarantiaActiva) &&
+                  String(bien.solicitudGarantiaActiva).trim() === String(currentNumeroSolicitud).trim());
 
               const isAlreadyInWarranty = !!bien.enGarantia && !wasOriginallyInThisGarantia;
-              const isAlreadySelected = alreadySelectedBienIds.some(
-                (id) => String(id) === String(bien.idBien)
-              );
+              const isAlreadySelected =
+                hasValidId &&
+                alreadySelectedBienIds.some(
+                  (id) => id !== undefined && id !== null && id !== '' && String(id) === String(bien.idBien)
+                );
               const isDisabled = isBlocked || isInactive || isAlreadyInWarranty || isAlreadySelected;
 
               let reason = '';

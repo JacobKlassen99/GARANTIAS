@@ -30,6 +30,7 @@ import {
   obtenerLotePorId,
   obtenerDisponibilidadLote,
   determinarTipoGarantiaValido,
+  findAnyCachedData,
 } from '../../services/backend';
 import { ClientSearchAutocomplete } from './ClientSearchAutocomplete';
 import { SeleccionarLoteModal } from './SeleccionarLoteModal';
@@ -41,27 +42,44 @@ interface EditarGarantiaModalProps {
   idGarantia: string;
   onClose: () => void;
   onSaved: () => void;
+  garantiaPrevia?: Garantia;
 }
 
 export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
   idGarantia,
   onClose,
   onSaved,
+  garantiaPrevia,
 }) => {
   const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedSuccessfully, setHasLoadedSuccessfully] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Datos principales
-  const [numeroSolicitud, setNumeroSolicitud] = useState('');
-  const [fecha, setFecha] = useState('');
-  const [fechaVencimiento, setFechaVencimiento] = useState('');
-  const [modalidad, setModalidad] = useState<'Simple' | 'Múltiple'>('Simple');
-  const [selectedPrestatario, setSelectedPrestatario] = useState<Cliente | null>(null);
-  const [garantiaConTipo, setGarantiaConTipo] = useState<TipoGarantiaCon>('Farmer Rechnung');
+  // Datos principales inicializados con garantiaPrevia si está disponible
+  const [numeroSolicitud, setNumeroSolicitud] = useState(garantiaPrevia?.numeroSolicitud || '');
+  const [fecha, setFecha] = useState(garantiaPrevia?.fecha ? garantiaPrevia.fecha.split('T')[0] : '');
+  const [fechaVencimiento, setFechaVencimiento] = useState(
+    garantiaPrevia?.fechaVencimiento ? garantiaPrevia.fechaVencimiento.split('T')[0] : ''
+  );
+  const [modalidad, setModalidad] = useState<'Simple' | 'Múltiple'>(
+    garantiaPrevia?.modalidad === 'Múltiple' ? 'Múltiple' : 'Simple'
+  );
+  const [selectedPrestatario, setSelectedPrestatario] = useState<Cliente | null>(
+    garantiaPrevia?.prestatario
+      ? {
+          cuenta: garantiaPrevia.cuentaPrestatario,
+          nombre: garantiaPrevia.prestatario,
+          ci: '',
+        }
+      : null
+  );
+  const [garantiaConTipo, setGarantiaConTipo] = useState<TipoGarantiaCon>(
+    (garantiaPrevia?.garantiaConTipo as TipoGarantiaCon) || 'Farmer Rechnung'
+  );
   const [selectedGarantiaCliente, setSelectedGarantiaCliente] = useState<Cliente | null>(null);
-  const [observacion, setObservacion] = useState('');
+  const [observacion, setObservacion] = useState(garantiaPrevia?.observacion || '');
 
   // Items
   const [lotes, setLotes] = useState<GarantiaLoteRelacion[]>([]);
@@ -78,276 +96,218 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
   const [originalLotes, setOriginalLotes] = useState<{ idLote: string | number; numeroLote?: string; hectareas: number }[]>([]);
   const [originalBienIds, setOriginalBienIds] = useState<(string | number)[]>([]);
 
+  const loadAll = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      // Cargar inmediatamente desde memoria si están disponibles para respuesta instantánea
+      const cachedClientes = findAnyCachedData<Cliente>('clientes') || [];
+      const cachedLotes = findAnyCachedData<Lote>('lotes') || [];
+      const cachedBienes = findAnyCachedData<Bien>('bienes') || [];
+
+      setClientesList(cachedClientes);
+      setAvailableLotes(cachedLotes);
+      setAvailableBienes(cachedBienes);
+
+      // Llamada enfocada y única para traer la garantía completa con sus lotes y bienes reales
+      const garantiaFull = await obtenerGarantiaCompleta(idGarantia, false);
+
+      if (!garantiaFull) {
+        throw new Error(`No se pudo obtener la garantía ${idGarantia} desde el servidor.`);
+      }
+
+      setNumeroSolicitud(garantiaFull.numeroSolicitud || '');
+      setFecha(garantiaFull.fecha ? garantiaFull.fecha.split('T')[0] : '');
+      setFechaVencimiento(
+        garantiaFull.fechaVencimiento ? garantiaFull.fechaVencimiento.split('T')[0] : ''
+      );
+      setModalidad(garantiaFull.modalidad === 'Múltiple' ? 'Múltiple' : 'Simple');
+      setSelectedPrestatario({
+        cuenta: garantiaFull.cuentaPrestatario,
+        nombre: garantiaFull.prestatario,
+        ci: '',
+      });
+
+      // Determinar acreedor general
+      const rawTipo = (garantiaFull.garantiaConTipo || '').trim();
+      const rawCuenta = String(garantiaFull.garantiaConCuenta || '').trim();
+      const rawNombre = (garantiaFull.garantiaConNombre || '').trim();
+      const prestatarioCuenta = String(garantiaFull.cuentaPrestatario || '').trim();
+
+      let resolvedTipo: TipoGarantiaCon = 'Farmer Rechnung';
+      let resolvedCliente: Cliente | null = null;
+
+      if (rawNombre === 'Farmer Rechnung' || rawTipo === 'Farmer Rechnung' || rawNombre.includes('Farmer')) {
+        resolvedTipo = 'Farmer Rechnung';
+      } else if (rawNombre === 'Campo Grande' || rawTipo === 'Campo Grande' || rawNombre.includes('Campo')) {
+        resolvedTipo = 'Campo Grande';
+      } else if (rawCuenta && rawCuenta !== prestatarioCuenta) {
+        const matchedClient = cachedClientes.find((c) => String(c.cuenta).trim() === rawCuenta);
+        if (matchedClient) {
+          resolvedTipo = 'Cliente';
+          resolvedCliente = matchedClient;
+        } else {
+          resolvedTipo = 'Cliente';
+          resolvedCliente = {
+            cuenta: rawCuenta,
+            nombre: rawNombre || `Cliente ${rawCuenta}`,
+            ci: '',
+          };
+        }
+      } else if (rawNombre && rawNombre !== 'Clientes Particulares Múltiples') {
+        const matchedByName = cachedClientes.find((c) => c.nombre.toLowerCase().trim() === rawNombre.toLowerCase());
+        if (matchedByName) {
+          resolvedTipo = 'Cliente';
+          resolvedCliente = matchedByName;
+        } else if (rawNombre.includes('Campo')) {
+          resolvedTipo = 'Campo Grande';
+        } else {
+          resolvedTipo = 'Farmer Rechnung';
+        }
+      }
+
+      setGarantiaConTipo(resolvedTipo);
+      setSelectedGarantiaCliente(resolvedCliente);
+      setObservacion(garantiaFull.observacion || '');
+
+      const rawLotes = Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : [];
+
+      // Mapear lotes directamente usando los datos oficiales recibidos de Apps Script
+      const lotesEnriquecidos: GarantiaLoteRelacion[] = rawLotes.map((lote) => {
+        const masterLote = cachedLotes.find((l) => {
+          const matchId = lote.idLote && String(l.idLote).trim().toLowerCase() === String(lote.idLote).trim().toLowerCase();
+          const matchNum = lote.numeroLote && String(l.numeroLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase();
+          return matchId || matchNum;
+        });
+
+        const officialId = lote.idLote || masterLote?.idLote || '';
+        const officialNumero = lote.numeroLote || masterLote?.numeroLote || '';
+        const officialHaTotales = lote.hectareasTotales || masterLote?.hectareas || lote.hectareas;
+        const cta = lote.cuentaPropietario ?? masterLote?.cuentaPropietario ?? '';
+        const prop = lote.propietario || masterLote?.propietario || '';
+        const dispParaEsta = officialHaTotales;
+
+        let itemTipo: TipoGarantiaCon = 'Farmer Rechnung';
+        let itemCuenta: string = '';
+        let itemNombre = 'Farmer Rechnung';
+
+        const lTipo = (lote.garantiaConTipo || '').trim();
+        const lNombre = (lote.garantiaConNombre || '').trim();
+        const lCuenta = String(lote.garantiaConCuenta || '').trim();
+
+        if (lTipo === 'Farmer Rechnung' || lNombre === 'Farmer Rechnung' || lNombre.includes('Farmer')) {
+          itemTipo = 'Farmer Rechnung';
+          itemCuenta = '';
+          itemNombre = 'Farmer Rechnung';
+        } else if (lTipo === 'Campo Grande' || lNombre === 'Campo Grande' || lNombre.includes('Campo')) {
+          itemTipo = 'Campo Grande';
+          itemCuenta = '';
+          itemNombre = 'Campo Grande';
+        } else if (lTipo === 'Cliente' || lCuenta) {
+          itemTipo = 'Cliente';
+          itemCuenta = lCuenta;
+          const matched = cachedClientes.find((c) => String(c.cuenta).trim() === lCuenta);
+          itemNombre = matched ? `${matched.cuenta} — ${matched.nombre}` : (lNombre || (lCuenta ? `Cliente ${lCuenta}` : 'Cliente'));
+        }
+
+        return {
+          ...lote,
+          idLote: officialId,
+          numeroLote: officialNumero,
+          hectareas: Number(lote.hectareas) || 0,
+          hectareasTotales: officialHaTotales,
+          hectareasDisponibles: dispParaEsta,
+          hectareasMaxPermitidas: dispParaEsta,
+          hectareasEnOtrasGarantias: 0,
+          propietario: prop,
+          cuentaPropietario: cta,
+          garantiaConTipo: itemTipo,
+          garantiaConCuenta: itemCuenta,
+          garantiaConNombre: itemNombre,
+        };
+      });
+
+      // Verificar si alguna relación no tiene hectáreas válidas
+      const loteSinHaValidas = lotesEnriquecidos.find((l) => l.hectareasIndeterminadas || Number(l.hectareas) <= 0);
+      if (loteSinHaValidas) {
+        setErrorMessage(
+          `No se pudieron determinar las hectáreas guardadas en garantia_lotes para el lote ${loteSinHaValidas.numeroLote || loteSinHaValidas.idLote}. Para proteger los datos reales, se ha bloqueado el guardado.`
+        );
+      }
+
+      setOriginalLotes(
+        lotesEnriquecidos.map((l) => ({
+          idLote: l.idLote,
+          numeroLote: l.numeroLote,
+          hectareas: Number(l.hectareas) || 0,
+        }))
+      );
+      setLotes(lotesEnriquecidos);
+
+      const rawBienes = Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : [];
+      setOriginalBienIds(rawBienes.map((b) => b.idBien));
+      const bienesEnriquecidos: GarantiaBienRelacion[] = rawBienes.map((bien) => {
+        const masterBien = cachedBienes.find((b) => String(b.idBien) === String(bien.idBien));
+
+        let itemTipo: TipoGarantiaCon = 'Farmer Rechnung';
+        let itemCuenta: string = '';
+        let itemNombre = 'Farmer Rechnung';
+
+        const bTipo = (bien.garantiaConTipo || '').trim();
+        const bNombre = (bien.garantiaConNombre || '').trim();
+        const bCuenta = String(bien.garantiaConCuenta || '').trim();
+
+        if (bTipo === 'Farmer Rechnung' || bNombre === 'Farmer Rechnung' || bNombre.includes('Farmer')) {
+          itemTipo = 'Farmer Rechnung';
+          itemCuenta = '';
+          itemNombre = 'Farmer Rechnung';
+        } else if (bTipo === 'Campo Grande' || bNombre === 'Campo Grande' || bNombre.includes('Campo')) {
+          itemTipo = 'Campo Grande';
+          itemCuenta = '';
+          itemNombre = 'Campo Grande';
+        } else if (bTipo === 'Cliente' || bCuenta) {
+          itemTipo = 'Cliente';
+          itemCuenta = bCuenta;
+          const matched = cachedClientes.find((c) => String(c.cuenta).trim() === bCuenta);
+          itemNombre = matched ? `${matched.cuenta} — ${matched.nombre}` : (bNombre || (bCuenta ? `Cliente ${bCuenta}` : 'Cliente'));
+        }
+
+        return {
+          ...bien,
+          idBien: bien.idBien || masterBien?.idBien || '',
+          propietario: bien.propietario || masterBien?.propietario || '',
+          cuentaPropietario: bien.cuentaPropietario ?? masterBien?.cuentaPropietario ?? '',
+          garantiaConTipo: itemTipo,
+          garantiaConCuenta: itemCuenta,
+          garantiaConNombre: itemNombre,
+        };
+      });
+      setBienes(bienesEnriquecidos);
+
+      setHasLoadedSuccessfully(true);
+
+      // Si alguna lista no estaba en caché, cargarla suavemente en segundo plano
+      if (cachedClientes.length === 0 || cachedLotes.length === 0 || cachedBienes.length === 0) {
+        Promise.all([
+          cachedClientes.length === 0 ? getClientes({ page: 1, pageSize: 200 }).catch(() => null) : null,
+          cachedLotes.length === 0 ? getLotes({ page: 1, pageSize: 200 }).catch(() => null) : null,
+          cachedBienes.length === 0 ? getBienes({ page: 1, pageSize: 200 }).catch(() => null) : null,
+        ]).then(([cRes, lRes, bRes]) => {
+          if (cRes?.data) setClientesList(cRes.data);
+          if (lRes?.data) setAvailableLotes(lRes.data);
+          if (bRes?.data) setAvailableBienes(bRes.data);
+        }).catch(() => {});
+      }
+    } catch (err: any) {
+      setHasLoadedSuccessfully(false);
+      setErrorMessage(err.message || 'No se pudo conectar con el servidor.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
-    const loadAll = async () => {
-      setIsLoading(true);
-      setErrorMessage(null);
-      try {
-        const [garantiaFull, cRes, lRes, bRes] = await Promise.all([
-          obtenerGarantiaCompleta(idGarantia, false),
-          getClientes({ page: 1, pageSize: 1000 }),
-          getLotes({ page: 1, pageSize: 1000 }),
-          getBienes({ page: 1, pageSize: 1000 }),
-        ]);
-
-        if (!isMounted) return;
-
-        const cList = Array.isArray(cRes?.data) ? cRes.data : [];
-        const lList = Array.isArray(lRes?.data) ? lRes.data : [];
-        const bList = Array.isArray(bRes?.data) ? bRes.data : [];
-
-        setClientesList(cList);
-        setAvailableLotes(lList);
-        setAvailableBienes(bList);
-
-        if (garantiaFull) {
-          setNumeroSolicitud(garantiaFull.numeroSolicitud || '');
-          setFecha(garantiaFull.fecha ? garantiaFull.fecha.split('T')[0] : '');
-          setFechaVencimiento(
-            garantiaFull.fechaVencimiento ? garantiaFull.fechaVencimiento.split('T')[0] : ''
-          );
-          setModalidad(garantiaFull.modalidad === 'Múltiple' ? 'Múltiple' : 'Simple');
-          setSelectedPrestatario({
-            cuenta: garantiaFull.cuentaPrestatario,
-            nombre: garantiaFull.prestatario,
-            ci: '',
-          });
-
-          // Determinar de forma segura y precisa el acreedor general (garantiaCon)
-          const rawTipo = (garantiaFull.garantiaConTipo || '').trim();
-          const rawCuenta = String(garantiaFull.garantiaConCuenta || '').trim();
-          const rawNombre = (garantiaFull.garantiaConNombre || '').trim();
-          const prestatarioCuenta = String(garantiaFull.cuentaPrestatario || '').trim();
-
-          let resolvedTipo: TipoGarantiaCon = 'Farmer Rechnung';
-          let resolvedCliente: Cliente | null = null;
-
-          if (rawNombre === 'Farmer Rechnung' || rawTipo === 'Farmer Rechnung' || rawNombre.includes('Farmer')) {
-            resolvedTipo = 'Farmer Rechnung';
-          } else if (rawNombre === 'Campo Grande' || rawTipo === 'Campo Grande' || rawNombre.includes('Campo')) {
-            resolvedTipo = 'Campo Grande';
-          } else if (rawCuenta && rawCuenta !== prestatarioCuenta) {
-            const matchedClient = cList.find((c) => String(c.cuenta).trim() === rawCuenta);
-            if (matchedClient) {
-              resolvedTipo = 'Cliente';
-              resolvedCliente = matchedClient;
-            } else {
-              resolvedTipo = 'Cliente';
-              resolvedCliente = {
-                cuenta: rawCuenta,
-                nombre: rawNombre || `Cliente ${rawCuenta}`,
-                ci: '',
-              };
-            }
-          } else if (rawNombre && rawNombre !== 'Clientes Particulares Múltiples') {
-            const matchedByName = cList.find((c) => c.nombre.toLowerCase().trim() === rawNombre.toLowerCase());
-            if (matchedByName) {
-              resolvedTipo = 'Cliente';
-              resolvedCliente = matchedByName;
-            } else if (rawNombre.includes('Campo')) {
-              resolvedTipo = 'Campo Grande';
-            } else {
-              resolvedTipo = 'Farmer Rechnung';
-            }
-          } else {
-            // Fallback para modalidad múltiple sin cuenta asignada
-            const rawLotesList = Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : [];
-            const rawBienesList = Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : [];
-            const primerLote = rawLotesList[0];
-            const primerBien = rawBienesList[0];
-            const pTipo = primerLote?.garantiaConTipo || primerBien?.garantiaConTipo;
-            const pNombre = primerLote?.garantiaConNombre || primerBien?.garantiaConNombre;
-
-            if (pTipo === 'Campo Grande' || pNombre === 'Campo Grande') {
-              resolvedTipo = 'Campo Grande';
-            } else if (pTipo === 'Farmer Rechnung' || pNombre === 'Farmer Rechnung') {
-              resolvedTipo = 'Farmer Rechnung';
-            } else if (pNombre && pNombre !== 'Clientes Particulares Múltiples') {
-              const matchedClient = cList.find((c) => `${c.cuenta} — ${c.nombre}` === pNombre || c.nombre === pNombre);
-              if (matchedClient) {
-                resolvedTipo = 'Cliente';
-                resolvedCliente = matchedClient;
-              } else {
-                resolvedTipo = 'Farmer Rechnung';
-              }
-            } else {
-              resolvedTipo = 'Farmer Rechnung';
-            }
-          }
-
-          setGarantiaConTipo(resolvedTipo);
-          setSelectedGarantiaCliente(resolvedCliente);
-
-          setObservacion(garantiaFull.observacion || '');
-
-          const rawLotes = Array.isArray(garantiaFull.lotes) ? garantiaFull.lotes : [];
-
-          // Correlacionar lotes con la base de datos real (hoja lotes) para obtener ID Lote real y N.º de Lote
-          const lotesEnriquecidos = await Promise.all(
-            rawLotes.map(async (lote) => {
-              let masterLote = lList.find((l) => {
-                const matchId = lote.idLote && String(l.idLote).trim().toLowerCase() === String(lote.idLote).trim().toLowerCase();
-                const matchNum = lote.numeroLote && String(l.numeroLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase();
-                const matchCross1 = lote.idLote && String(l.numeroLote).trim().toLowerCase() === String(lote.idLote).trim().toLowerCase();
-                const matchCross2 = lote.numeroLote && String(l.idLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase();
-                return matchId || matchNum || matchCross1 || matchCross2;
-              });
-
-              if (!masterLote && (lote.numeroLote || lote.idLote)) {
-                if (lote.idLote) {
-                  masterLote = (await obtenerLotePorId(String(lote.idLote)).catch(() => null)) || undefined;
-                }
-                if (!masterLote && lote.numeroLote) {
-                  const found = await buscarLotes(String(lote.numeroLote), true).catch(() => []);
-                  masterLote = found.find((l) =>
-                    String(l.numeroLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase() ||
-                    String(l.idLote).trim().toLowerCase() === String(lote.numeroLote).trim().toLowerCase()
-                  );
-                }
-              }
-
-              const officialId = masterLote ? masterLote.idLote : lote.idLote;
-              const officialNumero = masterLote ? masterLote.numeroLote : lote.numeroLote;
-              const officialHaTotales = masterLote ? masterLote.hectareas : (lote.hectareasTotales || lote.hectareas);
-              const cta = lote.cuentaPropietario ?? masterLote?.cuentaPropietario ?? '';
-              const prop = lote.propietario || masterLote?.propietario || '';
-
-              // Obtener disponibilidad real de este lote para esta garantía
-              let dispParaEsta = officialHaTotales;
-              let haEnOtras = 0;
-              try {
-                const dispInfo = await obtenerDisponibilidadLote(
-                  {
-                    idLote: officialId,
-                    numeroLote: officialNumero,
-                    hectareas: officialHaTotales,
-                    cuentaPropietario: cta,
-                    propietario: prop,
-                  },
-                  idGarantia
-                );
-                dispParaEsta = dispInfo.hectareasDisponiblesParaEstaGarantia;
-                haEnOtras = dispInfo.hectareasEnOtrasGarantias;
-              } catch (e) {
-                console.warn('Error obteniendo disponibilidad para lote', officialNumero, e);
-              }
-
-              let itemTipo: TipoGarantiaCon = 'Farmer Rechnung';
-              let itemCuenta: string = '';
-              let itemNombre = 'Farmer Rechnung';
-
-              const lTipo = (lote.garantiaConTipo || '').trim();
-              const lNombre = (lote.garantiaConNombre || '').trim();
-              const lCuenta = String(lote.garantiaConCuenta || '').trim();
-
-              if (lTipo === 'Farmer Rechnung' || lNombre === 'Farmer Rechnung' || lNombre.includes('Farmer')) {
-                itemTipo = 'Farmer Rechnung';
-                itemCuenta = '';
-                itemNombre = 'Farmer Rechnung';
-              } else if (lTipo === 'Campo Grande' || lNombre === 'Campo Grande' || lNombre.includes('Campo')) {
-                itemTipo = 'Campo Grande';
-                itemCuenta = '';
-                itemNombre = 'Campo Grande';
-              } else if (lTipo === 'Cliente' || lCuenta) {
-                itemTipo = 'Cliente';
-                itemCuenta = lCuenta;
-                const matched = cList.find((c) => String(c.cuenta).trim() === lCuenta);
-                itemNombre = matched ? `${matched.cuenta} — ${matched.nombre}` : (lNombre || (lCuenta ? `Cliente ${lCuenta}` : 'Cliente'));
-              } else {
-                itemTipo = 'Farmer Rechnung';
-                itemCuenta = '';
-                itemNombre = 'Farmer Rechnung';
-              }
-
-              return {
-                ...lote,
-                idLote: officialId,
-                numeroLote: officialNumero,
-                hectareas: Number(lote.hectareas) || 0,
-                hectareasTotales: officialHaTotales,
-                hectareasDisponibles: dispParaEsta,
-                hectareasMaxPermitidas: dispParaEsta,
-                hectareasEnOtrasGarantias: haEnOtras,
-                propietario: prop,
-                cuentaPropietario: cta,
-                garantiaConTipo: itemTipo,
-                garantiaConCuenta: itemCuenta,
-                garantiaConNombre: itemNombre,
-              };
-            })
-          );
-
-          // Verificar si alguna relación no tiene hectáreas válidas
-          const loteSinHaValidas = lotesEnriquecidos.find((l) => l.hectareasIndeterminadas || Number(l.hectareas) <= 0);
-          if (loteSinHaValidas) {
-            setErrorMessage(
-              `No se pudieron determinar las hectáreas guardadas en garantia_lotes para el lote ${loteSinHaValidas.numeroLote || loteSinHaValidas.idLote}. Para proteger los datos reales, se ha bloqueado el guardado.`
-            );
-          }
-
-          setOriginalLotes(
-            lotesEnriquecidos.map((l) => ({
-              idLote: l.idLote,
-              numeroLote: l.numeroLote,
-              hectareas: Number(l.hectareas) || 0,
-            }))
-          );
-          setLotes(lotesEnriquecidos);
-
-          const rawBienes = Array.isArray(garantiaFull.bienes) ? garantiaFull.bienes : [];
-          setOriginalBienIds(rawBienes.map((b) => b.idBien));
-          const bienesEnriquecidos = rawBienes.map((bien) => {
-            const masterBien = bList.find((b) => String(b.idBien) === String(bien.idBien));
-
-            let itemTipo: TipoGarantiaCon = 'Farmer Rechnung';
-            let itemCuenta: string = '';
-            let itemNombre = 'Farmer Rechnung';
-
-            const bTipo = (bien.garantiaConTipo || '').trim();
-            const bNombre = (bien.garantiaConNombre || '').trim();
-            const bCuenta = String(bien.garantiaConCuenta || '').trim();
-
-            if (bTipo === 'Farmer Rechnung' || bNombre === 'Farmer Rechnung' || bNombre.includes('Farmer')) {
-              itemTipo = 'Farmer Rechnung';
-              itemCuenta = '';
-              itemNombre = 'Farmer Rechnung';
-            } else if (bTipo === 'Campo Grande' || bNombre === 'Campo Grande' || bNombre.includes('Campo')) {
-              itemTipo = 'Campo Grande';
-              itemCuenta = '';
-              itemNombre = 'Campo Grande';
-            } else if (bTipo === 'Cliente' || bCuenta) {
-              itemTipo = 'Cliente';
-              itemCuenta = bCuenta;
-              const matched = cList.find((c) => String(c.cuenta).trim() === bCuenta);
-              itemNombre = matched ? `${matched.cuenta} — ${matched.nombre}` : (bNombre || (bCuenta ? `Cliente ${bCuenta}` : 'Cliente'));
-            } else {
-              itemTipo = 'Farmer Rechnung';
-              itemCuenta = '';
-              itemNombre = 'Farmer Rechnung';
-            }
-
-            return {
-              ...bien,
-              idBien: bien.idBien || masterBien?.idBien || '',
-              propietario: bien.propietario || masterBien?.propietario || '',
-              cuentaPropietario: bien.cuentaPropietario ?? masterBien?.cuentaPropietario ?? '',
-              garantiaConTipo: itemTipo,
-              garantiaConCuenta: itemCuenta,
-              garantiaConNombre: itemNombre,
-            };
-          });
-          setBienes(bienesEnriquecidos);
-        } else {
-          setErrorMessage('No se pudo encontrar la garantía seleccionada.');
-        }
-      } catch (err: any) {
-        if (isMounted) setErrorMessage(err.message || 'Error cargando datos.');
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
-    };
-
     loadAll();
     return () => {
       isMounted = false;
@@ -686,7 +646,39 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
         {isLoading ? (
           <div className="p-12 text-center text-xs text-slate-500">
             <span className="inline-block w-5 h-5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mb-2" />
-            <p>Cargando datos completos de la garantía...</p>
+            <p className="font-semibold text-slate-700">Cargando garantía {numeroSolicitud ? `N.º ${numeroSolicitud}` : idGarantia}...</p>
+            <p className="text-[11px] text-slate-400 mt-1">Consultando relaciones de lotes y bienes asociados.</p>
+          </div>
+        ) : !hasLoadedSuccessfully ? (
+          <div className="p-8 text-center text-xs">
+            <div className="max-w-md mx-auto p-5 bg-red-50 border border-red-200 rounded-lg text-red-800 space-y-3 shadow-xs">
+              <div className="flex items-center justify-center gap-2 font-bold text-sm text-red-900">
+                <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+                <span>Error al cargar la garantía {numeroSolicitud ? `N.º ${numeroSolicitud}` : idGarantia}</span>
+              </div>
+              <p className="text-xs text-red-700">
+                {errorMessage || 'No se pudo conectar con el servidor de Google Apps Script.'}
+              </p>
+              <p className="text-[11px] text-slate-600 bg-white p-2.5 rounded border border-red-100">
+                Para proteger la integridad de los datos existentes en Google Sheets, el formulario no se muestra y la acción de guardado permanece bloqueada.
+              </p>
+              <div className="flex justify-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={loadAll}
+                  className="px-4 py-1.5 bg-red-700 hover:bg-red-800 text-white font-semibold rounded text-xs shadow-2xs transition cursor-pointer"
+                >
+                  Reintentar conexión
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded text-xs transition cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
@@ -1167,8 +1159,9 @@ export const EditarGarantiaModal: React.FC<EditarGarantiaModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={isSaving}
-                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded shadow-2xs transition cursor-pointer disabled:cursor-not-allowed"
+                disabled={isSaving || !hasLoadedSuccessfully || !!errorMessage}
+                title={!hasLoadedSuccessfully ? 'No se puede guardar hasta que los datos de la garantía se hayan cargado correctamente' : 'Guardar Cambios'}
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded shadow-2xs transition cursor-pointer disabled:cursor-not-allowed disabled:bg-slate-400"
               >
                 {isSaving ? (
                   <>

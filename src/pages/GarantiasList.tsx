@@ -25,7 +25,11 @@ import { ImpresionGarantia } from './ImpresionGarantia';
 import { EditarGarantiaModal } from '../components/common/EditarGarantiaModal';
 import { VerBienesLotesModal } from '../components/common/VerBienesLotesModal';
 import { EliminarGarantiaModal } from '../components/common/EliminarGarantiaModal';
-import { formatFecha, formatHectareas, formatPropietario } from '../utils/textSearch';
+import {
+  formatFecha,
+  formatHectareas,
+  formatPropietario,
+} from '../utils/textSearch';
 import { NavSection } from '../components/layout/Sidebar';
 
 interface GarantiasListProps {
@@ -83,8 +87,9 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
         search: search.trim() || undefined,
       };
       const res = await getGarantias(params, forceRefresh);
-      setGarantias(Array.isArray(res?.data) ? res.data : []);
-      setTotal(typeof res?.total === 'number' ? res.total : 0);
+      const items = Array.isArray(res?.data) ? res.data : [];
+      setGarantias(items);
+      setTotal(typeof res?.total === 'number' ? Math.max(res.total, items.length) : items.length);
       setHasLoadedOnce(true);
     } catch {
       if (garantias.length === 0) {
@@ -389,8 +394,8 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
                         <span className="font-bold text-slate-700">{garantia.garantiaConNombre}</span>
                       </td>
                       <td className="py-1.5 px-3 border-r border-slate-100">
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                          {garantia.tipoGarantia}
+                        <span className="inline-block px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                          {garantia.tipoGarantia || 'Terreno'}
                         </span>
                       </td>
 
@@ -535,7 +540,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
                 </div>
                 <div>
                   <span className="text-slate-500">Tipo:</span>{' '}
-                  <strong>{garantiaParaVer.tipoGarantia}</strong>
+                  <strong>{garantiaParaVer.tipoGarantia || 'Terreno'}</strong>
                 </div>
                 <div>
                   <span className="text-slate-500">Modalidad:</span>{' '}
@@ -609,6 +614,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
       {garantiaToEdit && (
         <EditarGarantiaModal
           idGarantia={garantiaToEdit.idGarantia}
+          garantiaPrevia={garantiaToEdit}
           onClose={() => setGarantiaToEdit(null)}
           onSaved={() => {
             setGarantiaToEdit(null);

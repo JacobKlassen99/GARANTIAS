@@ -313,7 +313,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white print:static print:block">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 sm:p-4 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white print:static print:block print:inset-0 print:z-auto">
       {/* Configuración de Impresión en Tamaño CARTA (Letter) */}
       <style>{`
         @media print {
@@ -321,22 +321,34 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
             size: letter portrait;
             margin: 10mm 12mm 10mm 12mm;
           }
-          body {
-            background-color: #ffffff !important;
-            color: #000000 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          body * {
+            visibility: hidden !important;
           }
-          .print\\:hidden {
-            display: none !important;
+          #printable-official-document,
+          #printable-official-document * {
+            visibility: visible !important;
           }
-          .print-container {
-            padding: 0 !important;
-            margin: 0 !important;
+          #printable-official-document {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
             max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
             box-shadow: none !important;
             border: none !important;
-            width: 100% !important;
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            overflow: visible !important;
+            max-height: none !important;
+            display: block !important;
+          }
+          .print\\:hidden,
+          .no-print,
+          button {
+            display: none !important;
+            visibility: hidden !important;
           }
           tr, .avoid-break {
             page-break-inside: avoid !important;
@@ -346,14 +358,19 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
       `}</style>
 
       {/* Contenedor Modal */}
-      <div className="print-container w-full max-w-4xl bg-white rounded-lg shadow-2xl border border-slate-300 overflow-hidden flex flex-col my-auto max-h-[96vh] print:max-h-none print:shadow-none print:border-none print:rounded-none">
+      <div className="print-container w-full max-w-4xl bg-white rounded-lg shadow-2xl border border-slate-300 overflow-hidden flex flex-col my-auto max-h-[96vh] print:max-h-none print:shadow-none print:border-none print:rounded-none print:bg-white print:static print:w-full print:block">
         {/* Barra de control superior (No imprimible) */}
         <div className="print:hidden bg-slate-900 text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-bold uppercase tracking-wider">
-              Vista Previa de Impresión Oficial (Carta / Letter) — Asoc. Civil "Colonia Chihuahua"
-            </span>
+            <div className="flex flex-col">
+              <span className="text-xs font-bold uppercase tracking-wider">
+                Vista Previa de Impresión Oficial (Carta / Letter) — Asoc. Civil "Colonia Chihuahua"
+              </span>
+              <span className="text-[10px] text-slate-400">
+                Sugerencia en Chrome: Desmarque "Encabezados y pies de página" en las opciones del cuadro de impresión.
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -369,7 +386,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
             <button
               onClick={handlePrint}
               disabled={isLoading || !hasItems}
-              title="Utilice la opción Guardar como PDF en el diálogo de impresión"
+              title="Seleccione 'Guardar como PDF' en el cuadro de diálogo de impresión"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed rounded transition border border-slate-700 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
@@ -386,8 +403,6 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
           </div>
         </div>
 
-
-
         {/* Banner Estado de Carga (No imprimible) */}
         {isLoading && (
           <div className="print:hidden p-4 bg-blue-50 border-b border-blue-200 text-blue-900 flex items-center justify-center gap-2 text-xs font-semibold">
@@ -396,9 +411,9 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
           </div>
         )}
 
-        {/* Banner Error de Carga (No imprimible & Impresion) */}
+        {/* Banner Error de Carga (No imprimible) */}
         {errorCarga && !isLoading && (
-          <div className="p-3 bg-rose-50 border-b border-rose-200 text-rose-900 flex items-center gap-2 text-xs font-medium">
+          <div className="print:hidden p-3 bg-rose-50 border-b border-rose-200 text-rose-900 flex items-center gap-2 text-xs font-medium">
             <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
             <span>
               <strong>Error de conexión / carga:</strong> {errorCarga}
@@ -408,7 +423,7 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
 
         {/* Banner Advertencia cuando NO hay elementos vinculados */}
         {!isLoading && !hasItems && !errorCarga && (
-          <div className="p-3 bg-amber-100 border-b border-amber-300 text-amber-950 flex items-center gap-2 text-xs font-semibold">
+          <div className="print:hidden p-3 bg-amber-100 border-b border-amber-300 text-amber-950 flex items-center gap-2 text-xs font-semibold">
             <AlertTriangle className="w-4 h-4 text-amber-800 shrink-0" />
             <span>
               <strong>ADVERTENCIA:</strong> Esta garantía no tiene terrenos ni bienes registrados en la base de datos. No se puede imprimir un documento incompleto.
@@ -417,7 +432,10 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
         )}
 
         {/* HOJA DE DOCUMENTO IMPRIMIBLE (Formato Carta / Letter Colonia Chihuahua) */}
-        <div className="overflow-y-auto p-6 sm:p-10 bg-white text-slate-900 print:p-0 print:m-0 print:overflow-visible font-serif text-[11pt] leading-normal select-text relative">
+        <div
+          id="printable-official-document"
+          className="overflow-y-auto p-6 sm:p-10 bg-white text-slate-900 print:p-0 print:m-0 print:overflow-visible font-serif text-[11pt] leading-normal select-text relative"
+        >
           {isLiberada && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-[0.06] select-none z-0 overflow-hidden">
               <span className="text-7xl sm:text-9xl font-black uppercase tracking-widest text-slate-900 -rotate-45">

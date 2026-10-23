@@ -7,26 +7,78 @@
   }
 }
 
-/* Reglas de impresión para documentos oficiales de garantía */
+/* Reglas de impresión para documentos oficiales de garantía (Carta / Letter) */
 @media print {
   @page {
-    margin: 1.5cm;
     size: letter portrait;
+    margin: 10mm 12mm 10mm 12mm;
   }
 
-  body {
+  /* Ocultar absolutamente todos los elementos de la interfaz de la aplicación por defecto */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* Hacer visible ÚNICAMENTE el documento oficial de garantía y sus elementos contenidos */
+  #printable-official-document,
+  #printable-official-document * {
+    visibility: visible !important;
+  }
+
+  /* Posicionar el documento oficial en la esquina superior izquierda de la hoja impresa */
+  #printable-official-document {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
     background-color: #ffffff !important;
     color: #000000 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    display: block !important;
+  }
+
+  /* Reset del fondo y lienzo para evitar páginas en blanco o pergaminos */
+  html,
+  body,
+  #root {
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: auto !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
-  /* Ocultar elementos de navegación y control */
+  /* Ocultar explícitamente menús, encabezados, botones y controles de la aplicación */
   header,
   aside,
   nav,
+  main,
   button,
-  .no-print {
+  .no-print,
+  .print\:hidden {
     display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Evitar saltos de página dentro de filas de tablas y bloques de firmas */
+  tr,
+  .avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  table {
+    page-break-inside: auto;
   }
 }

@@ -26,13 +26,22 @@ import { BienesList } from './pages/BienesList';
 import { Reportes } from './pages/Reportes';
 import { Configuracion } from './pages/Configuracion';
 
-import { logout, preloadAllData, getLastSyncTime } from './services/backend';
+import { logout, preloadAllData, getLastSyncTime, isSessionActive } from './services/backend';
 
 export default function App() {
-  // Estado de autenticación en memoria (NO se guarda permanentemente en localStorage)
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  // Estado de autenticación: verifica si existe una sesión activa válida
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => isSessionActive());
   const [currentSection, setCurrentSection] = useState<NavSection>('dashboard');
-  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() => getLastSyncTime());
+
+  // Precargar datos si ya había una sesión iniciada al refrescar
+  React.useEffect(() => {
+    if (isAuthenticated) {
+      preloadAllData().then(() => {
+        setLastSyncTime(getLastSyncTime() || 'Conectado');
+      }).catch(() => {});
+    }
+  }, []);
 
   // Trigger para abrir modales de creación desde accesos rápidos del Dashboard
   const [openNewClienteDirect, setOpenNewClienteDirect] = useState(false);
@@ -92,7 +101,7 @@ export default function App() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-100 relative">
-        <PWAUpdateBanner />
+        <PWAUpdateBanner isFormEditing={false} />
         <Login onSuccessLogin={handleLoginSuccess} />
       </div>
     );
@@ -100,7 +109,7 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden relative">
-      <PWAUpdateBanner />
+      <PWAUpdateBanner isFormEditing={currentSection === 'nueva-garantia'} />
       {/* Encabezado Superior (fijo en la parte superior) */}
       <Header
         onLogout={handleLogout}

@@ -36,7 +36,13 @@ import {
   EstadoRegistro,
   TipoGarantiaCon,
 } from '../types';
-import { calcularEstadoVencimiento, parseDecimal, formatHectareas, matchesAnyField } from '../utils/textSearch';
+import {
+  calcularEstadoVencimiento,
+  parseDecimal,
+  formatHectareas,
+  matchesAnyField,
+} from '../utils/textSearch';
+
 import {
   getFromMemoryCache,
   setToMemoryCache,
@@ -64,14 +70,86 @@ export const GOOGLE_APPS_SCRIPT_URL: string =
   (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GAS_URL) ||
   'https://script.google.com/macros/s/AKfycbzyX9dvWYVONQfd0EO9RpWCHtoi8_1Bk_EjNW5eVySyMv5AEBrXCEGE2YdH59V-ea2hbQ/exec';
 
-// Sesión en memoria (NO se guarda permanentemente en el navegador)
+const SESSION_STORAGE_KEY = 'colonia_chihuahua_auth_session';
+
+interface SessionData {
+  token: string;
+  timestamp: number;
+  institucion: string;
+}
+
+function getStoredSession(): SessionData | null {
+  try {
+    let raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) {
+      raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    }
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.token === 'string' && typeof parsed.timestamp === 'number') {
+      // Expiración por inactividad prolongada (24 horas)
+      const maxAgeMs = 24 * 60 * 60 * 1000;
+      if (Date.now() - parsed.timestamp > maxAgeMs) {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        return null;
+      }
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredSession(institucion: string): string {
+  const token = 'tok_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+  const data: SessionData = {
+    token,
+    timestamp: Date.now(),
+    institucion: institucion || 'ASOC. CIVIL "COLONIA CHIHUAHUA"',
+  };
+  try {
+    const serialized = JSON.stringify(data);
+    sessionStorage.setItem(SESSION_STORAGE_KEY, serialized);
+    localStorage.setItem(SESSION_STORAGE_KEY, serialized);
+  } catch {}
+  return token;
+}
+
+function clearStoredSession(): void {
+  try {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {}
+}
+
+const initialStoredSession = getStoredSession();
+
+// Sesión protegida: no guarda contraseñas, solo token de sesión temporal en sessionStorage
 let inMemorySession: {
   isAuthenticated: boolean;
   institucion: string;
 } = {
-  isAuthenticated: false,
-  institucion: 'ASOC. CIVIL "COLONIA CHIHUAHUA"',
+  isAuthenticated: Boolean(initialStoredSession),
+  institucion: initialStoredSession?.institucion || 'ASOC. CIVIL "COLONIA CHIHUAHUA"',
 };
+
+/**
+ * Comprueba si la sesión del usuario está activa y es válida.
+ * Permite mantener la sesión entre pestañas y al recargar la página
+ * sin almacenar nunca contraseñas en el navegador.
+ */
+export function isSessionActive(): boolean {
+  if (inMemorySession.isAuthenticated) return true;
+  const stored = getStoredSession();
+  if (stored) {
+    inMemorySession.isAuthenticated = true;
+    if (stored.institucion) inMemorySession.institucion = stored.institucion;
+    return true;
+  }
+  return false;
+}
 
 let lastSyncTimestamp: string | null = null;
 let isPreloading = false;
@@ -185,24 +263,6 @@ export async function preloadDataInBackground(forceRefresh: boolean = false): Pr
       timeStyle: 'medium',
     });
 
-    // Prioridad 6: Precarga gradual y limitada de detalles completos de garantías activas
-    // (Permite que al hacer clic en 'Editar' o 'Ver bienes y lotes', los datos abran al instante)
-    if (garantiasItems.length > 0) {
-      const topGarantias = garantiasItems.slice(0, 15);
-      for (const g of topGarantias) {
-        if (!g.idGarantia) continue;
-        const cacheKey = `garantia-completa:${g.idGarantia}`;
-        if (!forceRefresh && hasInMemoryCache('garantias', cacheKey)) {
-          continue;
-        }
-        try {
-          await new Promise((resolve) => setTimeout(resolve, 350));
-          await obtenerGarantiaCompleta(g.idGarantia, false).catch(() => null);
-        } catch {
-          // Continuar con las siguientes
-        }
-      }
-    }
   } finally {
     isPreloading = false;
   }
@@ -229,6 +289,7 @@ export function getSessionState() {
  * Cierre de sesión (limpia el estado y la caché en memoria RAM)
  */
 export function logout(): void {
+  clearStoredSession();
   inMemorySession.isAuthenticated = false;
   clearAllMemoryCache();
   lastSyncTimestamp = null;
@@ -266,7 +327,13 @@ export async function callAppsScript<T>(accion: string, datos: Record<string, an
         throw new BackendConnectionError(`Error de comunicación con el servidor (${response.status}).`);
       }
 
-      const data = await response.json();
+      const text = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new BackendConnectionError('El servidor devolvió una respuesta no válida o incompleta.');
+      }
 
       if (!data || data.ok === false) {
         const msg = data?.mensaje || data?.message || data?.error || 'No se pudo procesar la solicitud.';
@@ -286,9 +353,21 @@ export async function callAppsScript<T>(accion: string, datos: Record<string, an
     }
   };
 
+  const executeWithRetry = async (): Promise<T> => {
+    try {
+      return await executeRequest();
+    } catch (err: any) {
+      if (isReadOnly) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        return await executeRequest();
+      }
+      throw err;
+    }
+  };
+
   if (isReadOnly) {
     const dedupKey = `${accion}:${JSON.stringify(datos || {})}`;
-    return fetchWithDeduplication(dedupKey, executeRequest);
+    return fetchWithDeduplication(dedupKey, executeWithRetry);
   }
 
   return executeRequest();
@@ -330,6 +409,10 @@ export async function login(password: string): Promise<{ success: boolean; messa
 
     if (data && data.ok === true && data.resultado && data.resultado.ok === true) {
       inMemorySession.isAuthenticated = true;
+      if (data.resultado.institucion) {
+        inMemorySession.institucion = data.resultado.institucion;
+      }
+      saveStoredSession(inMemorySession.institucion);
       return {
         success: true,
         message: data.resultado.mensaje || 'Acceso autorizado.',

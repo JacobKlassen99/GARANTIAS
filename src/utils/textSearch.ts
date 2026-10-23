@@ -3,6 +3,7 @@
  * mayúsculas/minúsculas y coincidencias parciales.
  */
 
+
 /**
  * Normaliza un texto para búsqueda:
  * Convierte a minúsculas y elimina diacríticos/acentos (á -> a, é -> e, etc.)
