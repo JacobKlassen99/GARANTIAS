@@ -18,6 +18,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { NuevaGarantia } from './pages/NuevaGarantia';
+import { GarantiasPendientesList } from './pages/GarantiasPendientesList';
 import { GarantiasList } from './pages/GarantiasList';
 import { GarantiasLiberadasList } from './pages/GarantiasLiberadasList';
 import { ClientesList } from './pages/ClientesList';
@@ -65,7 +66,7 @@ export default function App() {
       setInitialBienFilter(options?.filterEstado);
       setInitialBienSearch(options?.search);
     }
-    if (sec === 'garantias') {
+    if (sec === 'garantias' || sec === 'garantias-pendientes') {
       setInitialGarantiaSearch(options?.search);
     }
     setCurrentSection(sec);
@@ -150,8 +151,15 @@ export default function App() {
 
             {currentSection === 'nueva-garantia' && (
               <NuevaGarantia
-                onSuccessCreated={() => setCurrentSection('garantias')}
+                onSuccessCreated={() => setCurrentSection('garantias-pendientes')}
                 onNavigate={handleNavigate}
+              />
+            )}
+
+            {currentSection === 'garantias-pendientes' && (
+              <GarantiasPendientesList
+                onNavigate={handleNavigate}
+                initialSearch={initialGarantiaSearch}
               />
             )}
 

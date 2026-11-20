@@ -177,12 +177,6 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
   const totalHectareas = selectedLotes.reduce((acc, l) => acc + (Number(l.hectareas) || 0), 0);
   const totalValorUSD = selectedBienes.reduce((acc, b) => acc + (Number(b.valorGarantiaUSD) || 0), 0);
 
-  // Determinar si hay operaciones con Cliente (para mostrar botón Imprimir sin Guardar)
-  const tieneOperacionCliente =
-    garantiaConTipo === 'Cliente' ||
-    selectedLotes.some((l) => l.garantiaConTipo === 'Cliente') ||
-    selectedBienes.some((b) => b.garantiaConTipo === 'Cliente');
-
   // Tipo de garantía calculado (compatible con backend Google Apps Script)
   const tipoGarantiaCalculado = determinarTipoGarantiaValido(
     selectedLotes,
@@ -603,7 +597,9 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
     try {
       const payload = buildGarantiaPayload();
       await saveGarantia(payload, false);
-      setSuccessMessage('Garantía registrada y guardada con éxito en Google Sheets.');
+      setSuccessMessage(
+        'Garantía registrada como pendiente por activar. Los terrenos y bienes quedaron reservados.'
+      );
       setTimeout(() => {
         onSuccessCreated();
       }, 1100);
@@ -1110,21 +1106,19 @@ export const NuevaGarantia: React.FC<NuevaGarantiaProps> = ({ onSuccessCreated, 
             />
           </div>
 
-          {/* BOTONES DE ACCIÓN: GUARDAR / IMPRIMIR SIN GUARDAR */}
+          {/* BOTONES DE ACCIÓN: GUARDAR / IMPRIMIR ANTES DE GUARDAR */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-slate-200">
             <div>
-              {tieneOperacionCliente && (
-                <button
-                  type="button"
-                  onClick={handlePrintWithoutSaving}
-                  disabled={isSaving}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 rounded border border-amber-300 transition cursor-pointer shadow-2xs"
-                  title="Prepara e imprime el contrato entre clientes sin alterar la base de datos ni reservar disponibilidad"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Imprimir Sin Guardar (Contrato Previo)</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handlePrintWithoutSaving}
+                disabled={isSaving}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 rounded border border-amber-300 transition cursor-pointer shadow-2xs"
+                title="Prepara e imprime el contrato oficial antes de guardar sin modificar la base de datos"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Imprimir Contrato (Antes de Guardar)</span>
+              </button>
             </div>
 
             <div className="flex items-center justify-end gap-2">

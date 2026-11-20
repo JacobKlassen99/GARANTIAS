@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard,
   FilePlus,
+  Clock,
   FileCheck2,
   Archive,
   Menu,
@@ -41,6 +42,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentSection, onSelectSe
   ];
 
   const moreItems: { id: NavSection; label: string; icon: React.ReactNode; desc: string }[] = [
+    {
+      id: 'garantias-pendientes',
+      label: 'Garantías pendientes',
+      icon: <Clock className="w-5 h-5 text-amber-700" />,
+      desc: 'Garantías nuevas por activar',
+    },
     {
       id: 'garantias-liberadas',
       label: 'Garantías Liberadas',
@@ -84,9 +91,15 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentSection, onSelectSe
     setShowMoreMenu(false);
   };
 
-  const isMoreActive = ['garantias-liberadas', 'clientes', 'lotes', 'bienes', 'reportes', 'configuracion'].includes(
-    currentSection
-  );
+  const isMoreActive = [
+    'garantias-pendientes',
+    'garantias-liberadas',
+    'clientes',
+    'lotes',
+    'bienes',
+    'reportes',
+    'configuracion',
+  ].includes(currentSection);
 
   return (
     <>

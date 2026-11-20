@@ -146,24 +146,26 @@ export const SeleccionarLoteModal: React.FC<SeleccionarLoteModalProps> = ({
     setIsResolvingDisp(true);
 
     try {
-      const dispInfo = await obtenerDisponibilidadLote(
-        {
-          idLote: lote.idLote,
-          numeroLote: lote.numeroLote,
-          hectareas: lote.hectareas,
-          cuentaPropietario: lote.cuentaPropietario,
-          propietario: lote.propietario,
-        },
-        idGarantiaActual
-      );
-      setTargetLoteDispInfo(dispInfo);
-
       const originalItem = originalGarantiaLotes.find(
         (orig) =>
           (lote.idLote && String(orig.idLote).toLowerCase() === String(lote.idLote).toLowerCase()) ||
           (orig.numeroLote && lote.numeroLote && orig.numeroLote.toLowerCase() === lote.numeroLote.toLowerCase())
       );
       const originalHa = originalItem ? Number(originalItem.hectareas) || 0 : 0;
+
+      const dispInfo = await obtenerDisponibilidadLote(
+        {
+          idLote: lote.idLote,
+          numeroLote: lote.numeroLote,
+          hectareas: lote.hectareas,
+          hectareasEnGarantia: lote.hectareasEnGarantia,
+          cuentaPropietario: lote.cuentaPropietario,
+          propietario: lote.propietario,
+        },
+        idGarantiaActual,
+        originalHa
+      );
+      setTargetLoteDispInfo(dispInfo);
 
       const disp = dispInfo.hectareasDisponiblesParaEstaGarantia;
       const valorInicial = originalHa > 0 ? originalHa : disp;

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Lock, Building, Save, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Settings, Lock, Building, Clock, Save, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { getConfiguracion, updateConfiguracion, hasInMemoryCache } from '../services/backend';
 
 export const Configuracion: React.FC = () => {
   const [nombreInstitucion, setNombreInstitucion] = useState('ASOC. CIVIL "COLONIA CHIHUAHUA"');
+  const [diasAlertaPendientes, setDiasAlertaPendientes] = useState<string>('30');
   const [nuevaContrasena, setNuevaContrasena] = useState('');
   const [confirmarContrasena, setConfirmarContrasena] = useState('');
 
@@ -20,6 +21,9 @@ export const Configuracion: React.FC = () => {
       const cfg = await getConfiguracion(forceRefresh);
       if (cfg && cfg.nombreInstitucion) {
         setNombreInstitucion(cfg.nombreInstitucion);
+      }
+      if (cfg && typeof cfg.diasAlertaPendientes === 'number' && cfg.diasAlertaPendientes > 0) {
+        setDiasAlertaPendientes(String(cfg.diasAlertaPendientes));
       }
     } catch {
       // Sin inventar valores
@@ -42,12 +46,20 @@ export const Configuracion: React.FC = () => {
       return;
     }
 
+    const diasParsed = parseInt(diasAlertaPendientes, 10);
+    if (!Number.isFinite(diasParsed) || diasParsed < 1) {
+      setErrorMessage('Los días de alerta para garantías pendientes deben ser un número entero mayor o igual a 1.');
+      return;
+    }
+
     setIsSaving(true);
     try {
       await updateConfiguracion({
         nuevaContrasena: nuevaContrasena || undefined,
         nombreInstitucion: nombreInstitucion.trim(),
+        diasAlertaPendientes: diasParsed,
       });
+      setDiasAlertaPendientes(String(diasParsed));
       setSuccessMessage('Configuración actualizada con éxito.');
       setNuevaContrasena('');
       setConfirmarContrasena('');
@@ -119,6 +131,34 @@ export const Configuracion: React.FC = () => {
           />
           <p className="mt-1 text-[10px] text-slate-400">
             Nombre institucional utilizado en encabezados y documentos oficiales de garantía.
+          </p>
+        </div>
+
+        {/* PARÁMETRO: Días de alerta para garantías pendientes */}
+        <div className="pt-3 border-t border-slate-100">
+          <label
+            htmlFor="dias-alerta-pendientes"
+            className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5"
+          >
+            <Clock className="w-3.5 h-3.5 text-amber-700" />
+            <span>Días de alerta para garantías pendientes</span>
+          </label>
+          <div className="flex items-center gap-2 max-w-xs">
+            <input
+              id="dias-alerta-pendientes"
+              type="number"
+              min={1}
+              step={1}
+              value={diasAlertaPendientes}
+              onChange={(e) => setDiasAlertaPendientes(e.target.value)}
+              disabled={isSaving}
+              required
+              className="w-28 px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 font-mono font-bold text-slate-800"
+            />
+            <span className="text-xs text-slate-600 font-medium">días</span>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">
+            Cuando una garantía pendiente supere esta cantidad de días sin activarse, se mostrará una advertencia visible en su fila. No se activa ni elimina automáticamente.
           </p>
         </div>
 

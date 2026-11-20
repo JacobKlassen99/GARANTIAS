@@ -106,6 +106,8 @@ export interface GarantiaBienRelacion {
   garantiaConNombre?: string;
 }
 
+export type EstadoGarantia = 'Pendiente' | 'Activa' | 'Liberada';
+
 export interface Garantia {
   idGarantia: string;
   numeroSolicitud: string;
@@ -113,6 +115,11 @@ export interface Garantia {
   fechaVencimiento?: string;
   estadoVencimiento?: 'Vigente' | 'Próxima a vencer' | 'Vencida' | 'Sin vencimiento' | string;
   diasRestantes?: number;
+  estadoGarantia?: EstadoGarantia | string;
+  fechaRegistro?: string;
+  fechaActivacion?: string;
+  diasPendientes?: number;
+  alertaPendiente?: boolean;
   cuentaPropietario: string | number;
   propietario: string;
   cuentaPrestatario: string | number;
@@ -143,6 +150,8 @@ export interface GarantiaLiberada {
   fecha: string; // Fecha de garantía
   fechaLiberacion: string; // Fecha de liberación
   fechaVencimiento?: string;
+  fechaRegistro?: string;
+  fechaActivacion?: string;
   cuentaPropietario: string | number;
   propietario: string;
   cuentaPrestatario: string | number;
@@ -246,6 +255,7 @@ export interface DetalleCliente {
 
 export interface ConfiguracionSistema {
   nombreInstitucion: string;
+  diasAlertaPendientes: number;
 }
 
 export interface DashboardStats {

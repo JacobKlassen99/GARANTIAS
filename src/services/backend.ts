@@ -38,6 +38,7 @@ import {
 } from '../types';
 import {
   calcularEstadoVencimiento,
+  calcularDiasPendientes,
   parseDecimal,
   formatHectareas,
   matchesAnyField,
@@ -65,9 +66,8 @@ export {
   deleteFromMemoryCache,
 };
 
-// URL del Web App de Google Apps Script proporcionada por el usuario
+// URL del Web App de Google Apps Script configurada para el proyecto
 export const GOOGLE_APPS_SCRIPT_URL: string =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GAS_URL) ||
   'https://script.google.com/macros/s/AKfycbzyX9dvWYVONQfd0EO9RpWCHtoi8_1Bk_EjNW5eVySyMv5AEBrXCEGE2YdH59V-ea2hbQ/exec';
 
 const SESSION_STORAGE_KEY = 'colonia_chihuahua_auth_session';
@@ -183,6 +183,7 @@ export async function preloadDataInBackground(forceRefresh: boolean = false): Pr
     if (forceRefresh) {
       invalidateMemoryCache([
         'garantias',
+        'garantias-pendientes',
         'clientes',
         'lotes',
         'bienes',
@@ -190,6 +191,7 @@ export async function preloadDataInBackground(forceRefresh: boolean = false): Pr
         'dashboard',
         'estadisticas_panel',
         'reportes',
+        'configuracion',
       ]);
     }
 
@@ -204,12 +206,10 @@ export async function preloadDataInBackground(forceRefresh: boolean = false): Pr
     }
 
     // Prioridad 1.1: Garantías Activas (página 1 estándar usada en GarantiasList)
-    let garantiasItems: Garantia[] = [];
     try {
       const resG = await listarGarantias({ page: 1, pageSize: 200 }, forceRefresh).catch(() => null);
-      if (resG?.data && Array.isArray(resG.data)) {
-        garantiasItems = resG.data;
-        setToMemoryCache('garantias', garantiasItems, 'all');
+      if (resG?.data && Array.isArray(resG.data) && (!resG.totalPages || resG.totalPages <= 1)) {
+        setToMemoryCache('garantias', resG.data, 'all');
       }
     } catch {
       // Continuar
@@ -221,17 +221,23 @@ export async function preloadDataInBackground(forceRefresh: boolean = false): Pr
         { page: 1, pageSize: 200, sortField: 'cuenta', sortDirection: 'asc' },
         forceRefresh
       ).catch(() => null);
-      if (resC?.data && Array.isArray(resC.data)) {
+      if (resC?.data && Array.isArray(resC.data) && (!resC.totalPages || resC.totalPages <= 1)) {
         setToMemoryCache('clientes', resC.data, 'all');
       }
     } catch {
       // Continuar
     }
 
-    // Prioridad 3: Lotes (página 1 y conjunto en memoria para modales)
+    // Prioridad 3: Lotes (solo guardar como 'all' si no existe ya el catálogo completo en RAM)
     try {
+      const existingAllLotes = getFromMemoryCache<Lote[]>('lotes', 'all');
       const resL = await listarLotes({ page: 1, pageSize: 200 }, forceRefresh).catch(() => null);
-      if (resL?.data && Array.isArray(resL.data)) {
+      if (
+        resL?.data &&
+        Array.isArray(resL.data) &&
+        (!resL.totalPages || resL.totalPages <= 1) &&
+        (!existingAllLotes || existingAllLotes.length <= resL.data.length)
+      ) {
         setToMemoryCache('lotes', resL.data, 'all');
       }
     } catch {
@@ -240,20 +246,30 @@ export async function preloadDataInBackground(forceRefresh: boolean = false): Pr
 
     // Prioridad 4: Vehículos y demás Bienes
     try {
+      const existingAllBienes = getFromMemoryCache<Bien[]>('bienes', 'all');
       const resB = await listarBienes({ page: 1, pageSize: 200 }, forceRefresh).catch(() => null);
-      if (resB?.data && Array.isArray(resB.data)) {
+      if (
+        resB?.data &&
+        Array.isArray(resB.data) &&
+        (!resB.totalPages || resB.totalPages <= 1) &&
+        (!existingAllBienes || existingAllBienes.length <= resB.data.length)
+      ) {
         setToMemoryCache('bienes', resB.data, 'all');
       }
     } catch {
       // Continuar
     }
 
-    // Prioridad 5: Garantías Liberadas
+    // Prioridad 5: Garantías Liberadas, Pendientes y Configuración
     try {
-      await listarGarantiasLiberadas(
-        { page: 1, pageSize: 200, sortField: 'fechaLiberacion', sortDirection: 'desc' },
-        forceRefresh
-      ).catch(() => null);
+      await Promise.all([
+        listarGarantiasPendientes({ page: 1, pageSize: 200 }, forceRefresh).catch(() => null),
+        listarGarantiasLiberadas(
+          { page: 1, pageSize: 200, sortField: 'fechaLiberacion', sortDirection: 'desc' },
+          forceRefresh
+        ).catch(() => null),
+        getConfiguracion(forceRefresh).catch(() => null),
+      ]);
     } catch {
       // Continuar
     }
@@ -474,9 +490,105 @@ export async function obtenerDatosIniciales(): Promise<DatosIniciales> {
   return res;
 }
 
+export interface ResumenHectareasConsolidado {
+  hectareasTotales: number;
+  hectareasEnGarantia: number;
+  hectareasDisponibles: number;
+  hectareasBloqueadas: number;
+  lotesBloqueados: number;
+  porUbicacion: UbicacionEstadistica[];
+}
+
+/**
+ * CÁLCULO UNIFICADO DE HECTÁREAS PARA TARJETAS Y TABLA POR UBICACIÓN
+ * Garantiza exactamente el mismo criterio y origen de datos:
+ * - Hectáreas en Garantía: suma hectáreas comprometidas (activas y pendientes),
+ *   acotadas por la superficie física de cada lote para no duplicar superficies.
+ * - Hectáreas Bloqueadas: superficie no comprometida en garantía de lotes con estado Bloqueado
+ *   (evita descontar dos veces cuando un lote bloqueado también tiene hectáreas en garantía).
+ * - Hectáreas Disponibles: superficie realmente utilizable para nuevas garantías
+ *   (nunca negativa; 0 para lotes bloqueados o inactivos).
+ */
+export function calcularResumenHectareasLotes(lotes: Lote[]): ResumenHectareasConsolidado {
+  const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+  const ubicacionesMap = new Map<
+    string,
+    {
+      ubicacion: string;
+      cantidadLotes: number;
+      hectareasTotales: number;
+      hectareasEnGarantia: number;
+      hectareasDisponibles: number;
+      hectareasBloqueadas: number;
+    }
+  >();
+
+  let hectareasTotales = 0;
+  let hectareasEnGarantia = 0;
+  let hectareasDisponibles = 0;
+  let hectareasBloqueadas = 0;
+  let lotesBloqueados = 0;
+
+  for (const lote of lotes) {
+    const haTotales = Math.max(0, Number(lote.hectareas) || 0);
+    const haGarantia = Math.min(haTotales, Math.max(0, Number(lote.hectareasEnGarantia) || 0));
+    const estadoLower = String(lote.estado || 'Disponible').trim().toLowerCase();
+    const isBloqueado = estadoLower === 'bloqueado';
+    const isInactivo = estadoLower === 'inactivo';
+
+    const haBloq = isBloqueado ? Math.max(0, haTotales - haGarantia) : 0;
+    const haDisp = isBloqueado || isInactivo ? 0 : Math.max(0, haTotales - haGarantia);
+
+    hectareasTotales += haTotales;
+    hectareasEnGarantia += haGarantia;
+    hectareasDisponibles += haDisp;
+    hectareasBloqueadas += haBloq;
+    if (isBloqueado) lotesBloqueados += 1;
+
+    const ubicacionKey = String(lote.ubicacion || 'Sin Ubicación').trim() || 'Sin Ubicación';
+    const existing = ubicacionesMap.get(ubicacionKey);
+    if (existing) {
+      existing.cantidadLotes += 1;
+      existing.hectareasTotales += haTotales;
+      existing.hectareasEnGarantia += haGarantia;
+      existing.hectareasDisponibles += haDisp;
+      existing.hectareasBloqueadas += haBloq;
+    } else {
+      ubicacionesMap.set(ubicacionKey, {
+        ubicacion: ubicacionKey,
+        cantidadLotes: 1,
+        hectareasTotales: haTotales,
+        hectareasEnGarantia: haGarantia,
+        hectareasDisponibles: haDisp,
+        hectareasBloqueadas: haBloq,
+      });
+    }
+  }
+
+  const porUbicacion: UbicacionEstadistica[] = Array.from(ubicacionesMap.values())
+    .map((u) => ({
+      ubicacion: u.ubicacion,
+      cantidadLotes: u.cantidadLotes,
+      hectareasTotales: round6(u.hectareasTotales),
+      hectareasEnGarantia: round6(u.hectareasEnGarantia),
+      hectareasDisponibles: round6(u.hectareasDisponibles),
+      hectareasBloqueadas: round6(u.hectareasBloqueadas),
+    }))
+    .sort((a, b) => a.ubicacion.localeCompare(b.ubicacion));
+
+  return {
+    hectareasTotales: round6(hectareasTotales),
+    hectareasEnGarantia: round6(hectareasEnGarantia),
+    hectareasDisponibles: round6(hectareasDisponibles),
+    hectareasBloqueadas: round6(hectareasBloqueadas),
+    lotesBloqueados,
+    porUbicacion,
+  };
+}
+
 /**
  * SERVICIOS DE DASHBOARD
- * accion: obtenerResumenDashboard
+ * Utiliza totales reales de garantías activas y el cálculo unificado de lotes y bienes.
  */
 export async function getDashboardStats(forceRefresh: boolean = false): Promise<DashboardStats> {
   if (!forceRefresh) {
@@ -484,48 +596,43 @@ export async function getDashboardStats(forceRefresh: boolean = false): Promise<
     if (cached) return cached;
   }
 
-  const garantiasCached = findAnyCachedData<Garantia>('garantias');
-  const lotesCached = findAnyCachedData<Lote>('lotes');
-  const bienesCached = findAnyCachedData<Bien>('bienes');
+  const [firstPageGarantias, lotes, bienes] = await Promise.all([
+    listarGarantias({ page: 1, pageSize: 200 }, forceRefresh).catch(() => null),
+    obtenerLotes(forceRefresh).catch(() => [] as Lote[]),
+    obtenerBienes(forceRefresh).catch(() => [] as Bien[]),
+  ]);
 
-  let garantias: Garantia[] = garantiasCached || [];
-  let lotes: Lote[] = lotesCached || [];
-  let bienes: Bien[] = bienesCached || [];
+  let totalGarantiasActivas = firstPageGarantias?.total ?? 0;
+  let garantiasAll: Garantia[] = firstPageGarantias?.data || [];
 
-  if (forceRefresh || garantias.length === 0 || lotes.length === 0 || bienes.length === 0) {
-    try {
-      const [gRes, lRes, bRes] = await Promise.all([
-        listarGarantias({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
-        listarLotes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
-        listarBienes({ page: 1, pageSize: 1000 }, forceRefresh).catch(() => null),
-      ]);
-      if (gRes) garantias = gRes.data || (Array.isArray(gRes) ? gRes : garantias);
-      if (lRes) lotes = lRes.data || (Array.isArray(lRes) ? lRes : lotes);
-      if (bRes) bienes = bRes.data || (Array.isArray(bRes) ? bRes : bienes);
-    } catch {
-      // Ignorar y usar lo disponible
+  if (firstPageGarantias?.totalPages && firstPageGarantias.totalPages > 1) {
+    const remaining = [];
+    for (let p = 2; p <= firstPageGarantias.totalPages; p++) {
+      remaining.push(listarGarantias({ page: p, pageSize: 200 }, forceRefresh));
+    }
+    const results = await Promise.all(remaining);
+    for (const r of results) {
+      if (r?.data) {
+        garantiasAll = garantiasAll.concat(r.data);
+      }
     }
   }
 
+  totalGarantiasActivas = Math.max(totalGarantiasActivas, garantiasAll.length);
+  const resumenHectareas = calcularResumenHectareasLotes(lotes);
+
   const stats: DashboardStats = {
-    garantiasActivas: garantias.length,
-    hectareasEnGarantia: lotes.reduce((acc, l) => acc + (l.hectareasEnGarantia || 0), 0),
-    hectareasDisponibles: lotes.reduce(
-      (acc, l) =>
-        acc +
-        (l.hectareasDisponibles !== undefined
-          ? l.hectareasDisponibles
-          : Math.max(0, l.hectareas - (l.hectareasEnGarantia || 0))),
-      0
-    ),
+    garantiasActivas: totalGarantiasActivas,
+    hectareasEnGarantia: resumenHectareas.hectareasEnGarantia,
+    hectareasDisponibles: resumenHectareas.hectareasDisponibles,
     bienesEnGarantia: bienes.filter((b) => b.enGarantia).length,
     valorBienesEnGarantiaUSD: bienes
       .filter((b) => b.enGarantia)
       .reduce((acc, b) => acc + (b.valorGarantiaUSD || 0), 0),
-    garantiasExternas: garantias.filter(
+    garantiasExternas: garantiasAll.filter(
       (g) => g.garantiaConTipo === 'Farmer Rechnung' || g.garantiaConTipo === 'Campo Grande'
     ).length,
-    lotesBloqueados: lotes.filter((l) => l.estado === 'Bloqueado').length,
+    lotesBloqueados: resumenHectareas.lotesBloqueados,
     bienesBloqueados: bienes.filter((b) => b.estado === 'Bloqueado').length,
   };
 
@@ -536,6 +643,8 @@ export async function getDashboardStats(forceRefresh: boolean = false): Promise<
 /**
  * SERVICIOS DE ESTADÍSTICAS DEL PANEL (NUEVO BACKEND)
  * accion: obtenerEstadisticasPanel
+ * Unifica porUbicacion con calcularResumenHectareasLotes para garantizar coincidencia
+ * exacta entre las tarjetas superiores y la tabla de disponibilidad por ubicación.
  */
 export async function obtenerEstadisticasPanel(forceRefresh: boolean = false): Promise<EstadisticasPanel> {
   if (!forceRefresh) {
@@ -543,10 +652,13 @@ export async function obtenerEstadisticasPanel(forceRefresh: boolean = false): P
     if (cached) return cached;
   }
 
-  const res = await callAppsScript<any>('obtenerEstadisticasPanel', {});
+  const [res, lotes] = await Promise.all([
+    callAppsScript<any>('obtenerEstadisticasPanel', {}),
+    obtenerLotes(forceRefresh).catch(() => [] as Lote[]),
+  ]);
   const data = res?.resultado || res?.data || res || {};
 
-  const porUbicacion: UbicacionEstadistica[] = Array.isArray(data?.porUbicacion)
+  const porUbicacionBackend: UbicacionEstadistica[] = Array.isArray(data?.porUbicacion)
     ? data.porUbicacion.map((item: any) => ({
         ubicacion: String(item?.ubicacion || item?.Ubicación || item?.Ubicacion || 'Sin Ubicación'),
         cantidadLotes: typeof item?.cantidadLotes === 'number' ? item.cantidadLotes : (Number(item?.['Cantidad Lotes']) || 0),
@@ -560,6 +672,9 @@ export async function obtenerEstadisticasPanel(forceRefresh: boolean = false): P
           : parseDecimal(item?.['Hectáreas Bloqueadas'] ?? item?.['Hectáreas No Disponibles'] ?? item?.hectareasBloqueadas ?? item?.hectareasNoDisponibles ?? 0),
       }))
     : [];
+
+  const porUbicacion: UbicacionEstadistica[] =
+    lotes.length > 0 ? calcularResumenHectareasLotes(lotes).porUbicacion : porUbicacionBackend;
 
   const proximasAVencer: GarantiaProximaVencer[] = Array.isArray(data?.proximasAVencer)
     ? data.proximasAVencer.map((item: any) => {
@@ -662,8 +777,16 @@ export function invalidarMapaCompromisosLotes() {
 }
 
 export async function obtenerDisponibilidadLote(
-  lote: { idLote: string | number; numeroLote?: string; hectareas?: number; cuentaPropietario?: string | number; propietario?: string },
-  idGarantiaActual?: string
+  lote: {
+    idLote: string | number;
+    numeroLote?: string;
+    hectareas?: number;
+    hectareasEnGarantia?: number;
+    cuentaPropietario?: string | number;
+    propietario?: string;
+  },
+  idGarantiaActual?: string,
+  hectareasOriginalesEnEstaGarantia?: number
 ): Promise<DisponibilidadLoteInfo> {
   let haTotales = Number(lote.hectareas) || 0;
   let enEstaGarantia = 0;
@@ -734,6 +857,18 @@ export async function obtenerDisponibilidadLote(
     }
   }
 
+  // Asegurar que las reservas reportadas por listarLotes (incluyendo garantías pendientes y activas) se respeten sin duplicar
+  const haEnGarantiaLote = Number(lote.hectareasEnGarantia) || 0;
+  if (haEnGarantiaLote > 0) {
+    if (!idGarantiaActual) {
+      enOtrasGarantias = Math.max(enOtrasGarantias, haEnGarantiaLote);
+    } else {
+      const haEnEstaRef = enEstaGarantia > 0 ? enEstaGarantia : Number(hectareasOriginalesEnEstaGarantia) || 0;
+      const otrasDesdeLote = Math.max(0, Math.round((haEnGarantiaLote - haEnEstaRef) * 1e6) / 1e6);
+      enOtrasGarantias = Math.max(enOtrasGarantias, otrasDesdeLote);
+    }
+  }
+
   const disp = Math.max(0, Math.round((haTotales - enOtrasGarantias) * 1e6) / 1e6);
 
   return {
@@ -757,8 +892,17 @@ export async function obtenerMapaCompromisosLotes(forceRefresh = false): Promise
   const map = new Map<string, number>();
 
   try {
-    const cachedGarantias = findAnyCachedData<Garantia>('garantias') || [];
-    for (const g of cachedGarantias) {
+    const cachedActivas = findAnyCachedData<Garantia>('garantias') || [];
+    const cachedPendientes = findAnyCachedData<Garantia>('garantias-pendientes') || [];
+    const seenIds = new Set<string>();
+    const combined: Garantia[] = [];
+    for (const g of [...cachedActivas, ...cachedPendientes]) {
+      const gid = String(g?.idGarantia || '').trim();
+      if (gid && seenIds.has(gid)) continue;
+      if (gid) seenIds.add(gid);
+      combined.push(g);
+    }
+    for (const g of combined) {
       if (Array.isArray(g.lotes)) {
         for (const gl of g.lotes) {
           const ha = parseDecimal(gl.hectareas);
@@ -787,10 +931,14 @@ export function normalizarLote(item: any, mapaCompromisos?: Map<string, number>)
   const idLote = item?.['ID Lote'] || item?.idLote || '';
   const numeroLote = item?.['N.º de Lote'] || item?.['N.º Lote'] || item?.numeroLote || '';
 
+  const dispStr = String(item?.['Disponibilidad'] || '').toLowerCase();
   const enGarantiaCalculado =
     typeof item?.['En Garantía'] === 'boolean'
       ? item['En Garantía']
-      : item?.enGarantia === true || item?.['Disponibilidad'] === 'En garantía';
+      : item?.enGarantia === true ||
+        dispStr.includes('garant') ||
+        dispStr.includes('reserv') ||
+        dispStr.includes('pendient');
 
   const hectareasTotales =
     typeof item?.['Hectáreas'] === 'number'
@@ -829,11 +977,17 @@ export function normalizarLote(item: any, mapaCompromisos?: Map<string, number>)
     }
   }
 
+  const estadoNormalizado = (item?.['Estado'] || item?.estado || 'Disponible') as EstadoRegistro;
+  const estadoLower = String(estadoNormalizado).trim().toLowerCase();
+  const isNoDisponibleAdmin = estadoLower === 'bloqueado' || estadoLower === 'inactivo';
+
   // Redondear a 6 decimales para evitar artefactos de punto flotante
   hectareasEnGarantia = Math.round(Math.min(hectareasTotales, Math.max(0, hectareasEnGarantia)) * 1e6) / 1e6;
 
-  const rawDisp = Math.round(Math.max(0, hectareasTotales - hectareasEnGarantia) * 1e6) / 1e6;
-  const hectareasDisponibles = rawDisp;
+  // Un lote bloqueado administrativamente o inactivo no tiene hectáreas disponibles para nuevas garantías
+  const hectareasDisponibles = isNoDisponibleAdmin
+    ? 0
+    : Math.round(Math.max(0, hectareasTotales - hectareasEnGarantia) * 1e6) / 1e6;
 
   const enGarantiaFinal = enGarantiaCalculado || hectareasEnGarantia > 0;
 
@@ -846,7 +1000,7 @@ export function normalizarLote(item: any, mapaCompromisos?: Map<string, number>)
     encargado: item?.['Encargado'] || item?.encargado || '',
     hectareas: hectareasTotales,
     ubicacion: item?.['Ubicación'] || item?.ubicacion || '',
-    estado: item?.['Estado'] || item?.estado || 'Disponible',
+    estado: estadoNormalizado,
     motivoBloqueo: item?.['Motivo Bloqueo'] || item?.motivoBloqueo || '',
     fechaBloqueo: item?.['Fecha Bloqueo'] || item?.fechaBloqueo || '',
     observacion: item?.['Observación'] || item?.observacion || '',
@@ -858,10 +1012,14 @@ export function normalizarLote(item: any, mapaCompromisos?: Map<string, number>)
 }
 
 export function normalizarBien(item: any): Bien {
+  const dispStr = String(item?.['Disponibilidad'] || '').toLowerCase();
   const enGarantiaCalculado =
     typeof item?.['En Garantía'] === 'boolean'
       ? item['En Garantía']
-      : item?.enGarantia === true || item?.['Disponibilidad'] === 'En garantía';
+      : item?.enGarantia === true ||
+        dispStr.includes('garant') ||
+        dispStr.includes('reserv') ||
+        dispStr.includes('pendient');
 
   const valorGarantiaUSD =
     typeof item?.['Valor en Garantía ($us.)'] === 'number'
@@ -906,11 +1064,47 @@ export function normalizarBien(item: any): Bien {
 }
 
 export function normalizarGarantia(item: any): Garantia {
+  const fecha = item?.['Fecha'] || item?.fecha || '';
   const fechaVencimiento =
     item?.['Fecha de Vencimiento'] ||
     item?.fechaVencimiento ||
     item?.['Fecha Vencimiento'] ||
     '';
+  const fechaRegistro =
+    item?.['Fecha de Registro'] ||
+    item?.fechaRegistro ||
+    item?.['Fecha Registro'] ||
+    '';
+  const fechaActivacion =
+    item?.['Fecha de Activación'] ||
+    item?.fechaActivacion ||
+    item?.['Fecha Activación'] ||
+    '';
+  const estadoGarantia =
+    item?.['Estado Garantía'] ||
+    item?.['Estado de Garantía'] ||
+    item?.estadoGarantia ||
+    item?.['Estado'] ||
+    item?.estado ||
+    '';
+
+  const rawDiasPendientes =
+    item?.['Días Pendientes'] ??
+    item?.['Días pendientes'] ??
+    item?.diasPendientes;
+  const diasPendientes =
+    typeof rawDiasPendientes === 'number' && !isNaN(rawDiasPendientes)
+      ? rawDiasPendientes
+      : rawDiasPendientes !== undefined && rawDiasPendientes !== null && String(rawDiasPendientes).trim() !== '' && !isNaN(Number(rawDiasPendientes))
+      ? Number(rawDiasPendientes)
+      : calcularDiasPendientes(fechaRegistro || fecha);
+
+  const alertaPendiente =
+    typeof item?.alertaPendiente === 'boolean'
+      ? item.alertaPendiente
+      : typeof item?.['Alerta Pendiente'] === 'boolean'
+      ? item['Alerta Pendiente']
+      : undefined;
 
   const diasRestantes =
     typeof item?.diasRestantes === 'number'
@@ -933,10 +1127,15 @@ export function normalizarGarantia(item: any): Garantia {
       : item?.numeroSolicitud !== undefined && item?.numeroSolicitud !== null
       ? String(item.numeroSolicitud)
       : '',
-    fecha: item?.['Fecha'] || item?.fecha || '',
+    fecha,
     fechaVencimiento,
     estadoVencimiento,
     diasRestantes,
+    estadoGarantia: estadoGarantia || undefined,
+    fechaRegistro: fechaRegistro || undefined,
+    fechaActivacion: fechaActivacion || undefined,
+    diasPendientes,
+    alertaPendiente,
     cuentaPropietario: item?.['Cuenta Propietario'] ?? item?.cuentaPropietario ?? '',
     propietario: item?.['Propietario'] || item?.propietario || '',
     cuentaPrestatario: item?.['Cuenta Prestatario'] ?? item?.cuentaPrestatario ?? '',
@@ -976,6 +1175,14 @@ export function normalizarGarantiaLiberada(item: any): GarantiaLiberada {
     item?.fechaVencimiento ||
     item?.['Fecha Vencimiento'] ||
     '';
+  const fechaRegistro =
+    item?.['Fecha de Registro'] ||
+    item?.fechaRegistro ||
+    '';
+  const fechaActivacion =
+    item?.['Fecha de Activación'] ||
+    item?.fechaActivacion ||
+    '';
 
   return {
     idGarantia:
@@ -994,6 +1201,8 @@ export function normalizarGarantiaLiberada(item: any): GarantiaLiberada {
     fecha,
     fechaLiberacion,
     fechaVencimiento,
+    fechaRegistro: fechaRegistro || undefined,
+    fechaActivacion: fechaActivacion || undefined,
     cuentaPropietario: item?.['Cuenta Propietario'] ?? item?.cuentaPropietario ?? '',
     propietario: item?.['Propietario'] || item?.propietario || '',
     cuentaPrestatario: item?.['Cuenta Prestatario'] ?? item?.cuentaPrestatario ?? '',
@@ -1405,24 +1614,27 @@ export async function listarLotes(
 export async function obtenerLotes(forceRefresh: boolean = false): Promise<Lote[]> {
   if (!forceRefresh) {
     const cached = getFromMemoryCache<Lote[]>('lotes', 'all');
-    if (cached && cached.length > 200) return cached;
+    if (cached && cached.length > 0) return cached;
     const anyCached = findAnyCachedData<Lote>('lotes');
     if (anyCached && anyCached.length > 200) return anyCached;
   }
-  const firstPage = await listarLotes({ page: 1, pageSize: 200 }, forceRefresh);
-  let allLotes = [...firstPage.data];
-  if (firstPage.totalPages && firstPage.totalPages > 1) {
-    const remainingPages = [];
-    for (let p = 2; p <= firstPage.totalPages; p++) {
-      remainingPages.push(listarLotes({ page: p, pageSize: 200 }, forceRefresh));
+
+  return fetchWithDeduplication<Lote[]>(`obtenerLotes:all:${forceRefresh ? 'refresh' : 'cache'}`, async () => {
+    const firstPage = await listarLotes({ page: 1, pageSize: 200 }, forceRefresh);
+    let allLotes = [...firstPage.data];
+    if (firstPage.totalPages && firstPage.totalPages > 1) {
+      const remainingPages = [];
+      for (let p = 2; p <= firstPage.totalPages; p++) {
+        remainingPages.push(listarLotes({ page: p, pageSize: 200 }, forceRefresh));
+      }
+      const results = await Promise.all(remainingPages);
+      for (const r of results) {
+        allLotes = allLotes.concat(r.data);
+      }
     }
-    const results = await Promise.all(remainingPages);
-    for (const r of results) {
-      allLotes = allLotes.concat(r.data);
-    }
-  }
-  setToMemoryCache('lotes', allLotes, 'all');
-  return allLotes;
+    setToMemoryCache('lotes', allLotes, 'all');
+    return allLotes;
+  });
 }
 
 export async function buscarLotes(texto: string, forceRefresh: boolean = false): Promise<Lote[]> {
@@ -1505,7 +1717,7 @@ export async function crearLote(lote: Partial<Lote>): Promise<any> {
     fechaBloqueo: lote.fechaBloqueo || '',
     observacion: lote.observacion ? lote.observacion.trim() : '',
   });
-  invalidateMemoryCache(['lotes', 'dashboard', 'client-detail']);
+  invalidateMemoryCache(['lotes', 'dashboard', 'estadisticas_panel', 'client-detail']);
   return result;
 }
 
@@ -1524,13 +1736,13 @@ export async function editarLote(lote: Partial<Lote>): Promise<any> {
     fechaBloqueo: lote.fechaBloqueo || '',
     observacion: lote.observacion ? lote.observacion.trim() : '',
   });
-  invalidateMemoryCache(['lotes', 'dashboard', 'client-detail']);
+  invalidateMemoryCache(['lotes', 'dashboard', 'estadisticas_panel', 'client-detail']);
   return result;
 }
 
 export async function eliminarLote(idLote: string): Promise<any> {
   const result = await callAppsScript('eliminarLote', { idLote });
-  invalidateMemoryCache(['lotes', 'dashboard', 'client-detail']);
+  invalidateMemoryCache(['lotes', 'dashboard', 'estadisticas_panel', 'client-detail']);
   return result;
 }
 
@@ -1596,13 +1808,27 @@ export async function listarBienes(
 export async function obtenerBienes(forceRefresh: boolean = false): Promise<Bien[]> {
   if (!forceRefresh) {
     const cached = getFromMemoryCache<Bien[]>('bienes', 'all');
-    if (cached) return cached;
+    if (cached && cached.length > 0) return cached;
     const anyCached = findAnyCachedData<Bien>('bienes');
-    if (anyCached && anyCached.length > 0) return anyCached;
+    if (anyCached && anyCached.length > 200) return anyCached;
   }
-  const paginated = await listarBienes({ page: 1, pageSize: 1000 }, forceRefresh);
-  setToMemoryCache('bienes', paginated.data, 'all');
-  return paginated.data;
+
+  return fetchWithDeduplication<Bien[]>(`obtenerBienes:all:${forceRefresh ? 'refresh' : 'cache'}`, async () => {
+    const firstPage = await listarBienes({ page: 1, pageSize: 200 }, forceRefresh);
+    let allBienes = [...firstPage.data];
+    if (firstPage.totalPages && firstPage.totalPages > 1) {
+      const remainingPages = [];
+      for (let p = 2; p <= firstPage.totalPages; p++) {
+        remainingPages.push(listarBienes({ page: p, pageSize: 200 }, forceRefresh));
+      }
+      const results = await Promise.all(remainingPages);
+      for (const r of results) {
+        allBienes = allBienes.concat(r.data);
+      }
+    }
+    setToMemoryCache('bienes', allBienes, 'all');
+    return allBienes;
+  });
 }
 
 export async function buscarBienes(texto: string, forceRefresh: boolean = false): Promise<Bien[]> {
@@ -1648,7 +1874,7 @@ export async function crearBien(bien: Partial<Bien>): Promise<any> {
     observacion: bien.observacion ? bien.observacion.trim() : '',
     valorBienUSD: Number(bien.valorBienUSD) || 0,
   });
-  invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
+  invalidateMemoryCache(['bienes', 'dashboard', 'estadisticas_panel', 'client-detail']);
   return result;
 }
 
@@ -1672,13 +1898,13 @@ export async function editarBien(bien: Partial<Bien>): Promise<any> {
     observacion: bien.observacion ? bien.observacion.trim() : '',
     valorBienUSD: Number(bien.valorBienUSD) || 0,
   });
-  invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
+  invalidateMemoryCache(['bienes', 'dashboard', 'estadisticas_panel', 'client-detail']);
   return result;
 }
 
 export async function eliminarBien(idBien: string): Promise<any> {
   const result = await callAppsScript('eliminarBien', { idBien });
-  invalidateMemoryCache(['bienes', 'dashboard', 'client-detail']);
+  invalidateMemoryCache(['bienes', 'dashboard', 'estadisticas_panel', 'client-detail']);
   return result;
 }
 
@@ -1725,7 +1951,11 @@ export async function listarGarantias(
   });
 
   const rawItems = Array.isArray(res?.items) ? res.items : Array.isArray(res) ? res : [];
-  const items = rawItems.map(normalizarGarantia);
+  // Garantías activas: excluir explícitamente pendientes o liberadas; conservar Activa y registros históricos sin columna estado
+  const items = rawItems.map(normalizarGarantia).filter((g: Garantia) => {
+    const st = String(g.estadoGarantia || '').trim().toLowerCase();
+    return !st || st === 'activa' || st === 'activo';
+  });
 
   const paginatedResult: PaginatedResponse<Garantia> = {
     data: items,
@@ -1738,6 +1968,81 @@ export async function listarGarantias(
   };
 
   setToMemoryCache('garantias', paginatedResult, params);
+  return paginatedResult;
+}
+
+export async function listarGarantiasPendientes(
+  params: QueryParams,
+  forceRefresh: boolean = false
+): Promise<PaginatedResponse<Garantia>> {
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<PaginatedResponse<Garantia>>('garantias-pendientes', params);
+    if (cached) return cached;
+  }
+
+  const res = await callAppsScript<any>('listarGarantiasPendientes', {
+    page: params.page || 1,
+    pageSize: params.pageSize || 200,
+    search: params.search || '',
+    filters: params.filters || {},
+    sort: params.sortField ? { field: params.sortField, direction: params.sortDirection || 'desc' } : {},
+  });
+
+  const rawItems = Array.isArray(res?.items)
+    ? res.items
+    : Array.isArray(res?.data)
+    ? res.data
+    : Array.isArray(res)
+    ? res
+    : [];
+
+  let items: Garantia[] = rawItems.map((raw: any) => {
+    const norm = normalizarGarantia(raw);
+    return {
+      ...norm,
+      estadoGarantia: norm.estadoGarantia || 'Pendiente',
+    };
+  });
+
+  if (params.search && params.search.trim()) {
+    const q = params.search.trim();
+    items = items.filter((g: Garantia) =>
+      matchesAnyField(
+        g,
+        [
+          'numeroSolicitud',
+          'propietario',
+          'prestatario',
+          'cuentaPropietario',
+          'cuentaPrestatario',
+          'garantiaConNombre',
+          'tipoGarantia',
+          'lotesResumen',
+          'polizasResumen',
+        ],
+        q
+      )
+    );
+  }
+
+  const pageSize = params.pageSize || 200;
+  const total = typeof res?.total === 'number' ? res.total : items.length;
+  const totalPages =
+    typeof res?.totalPages === 'number'
+      ? res.totalPages
+      : Math.max(1, Math.ceil(total / pageSize));
+
+  const paginatedResult: PaginatedResponse<Garantia> = {
+    data: items,
+    page: res?.page || params.page || 1,
+    pageSize,
+    total,
+    totalPages,
+    from: typeof res?.from === 'number' ? res.from : items.length > 0 ? ((params.page || 1) - 1) * pageSize + 1 : 0,
+    to: typeof res?.to === 'number' ? res.to : Math.min((params.page || 1) * pageSize, total),
+  };
+
+  setToMemoryCache('garantias-pendientes', paginatedResult, params);
   return paginatedResult;
 }
 
@@ -2108,12 +2413,33 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
           throw new Error(`El lote ${serverLote.numeroLote} se encuentra ${serverLote.estado.toLowerCase()} y no puede ser dado en garantía.`);
         }
 
-        const dispInfo = await obtenerDisponibilidadLote(serverLote);
+        const dispInfo = await obtenerDisponibilidadLote({
+          ...serverLote,
+          hectareasEnGarantia: serverLote.hectareasEnGarantia,
+        });
         const maxPermitido = dispInfo.hectareasDisponiblesParaEstaGarantia;
         if (Number(reqLote.hectareas) > maxPermitido + 1e-6) {
           const enOtras = dispInfo.hectareasEnOtrasGarantias;
-          const detalleOtras = enOtras > 0 ? ` (${formatHectareas(enOtras)} ha comprometidas en otra garantía activa)` : '';
+          const detalleOtras = enOtras > 0 ? ` (${formatHectareas(enOtras)} ha comprometidas en otra garantía)` : '';
           throw new Error(`El lote ${serverLote.numeroLote} solo tiene ${formatHectareas(maxPermitido)} hectáreas disponibles en el servidor${detalleOtras}.`);
+        }
+      }
+    }
+
+    if (Array.isArray(garantia.bienes) && garantia.bienes.length > 0) {
+      const bienesActuales = await obtenerBienes(false);
+      for (const reqBien of garantia.bienes) {
+        const cleanId = String(reqBien.idBien || '').trim().toLowerCase();
+        const serverBien = bienesActuales.find(
+          (b) => cleanId && String(b.idBien).trim().toLowerCase() === cleanId
+        );
+        if (serverBien) {
+          if (serverBien.estado === 'Bloqueado' || serverBien.estado === 'Inactivo') {
+            throw new Error(`El bien ${serverBien.numeroPoliza || serverBien.idBien} se encuentra ${serverBien.estado.toLowerCase()} y no puede ser dado en garantía.`);
+          }
+          if (serverBien.enGarantia) {
+            throw new Error(`El bien ${serverBien.numeroPoliza || serverBien.idBien} ya se encuentra reservado o comprometido en otra garantía.`);
+          }
         }
       }
     }
@@ -2220,7 +2546,16 @@ export async function crearGarantia(garantia: Partial<Garantia>): Promise<any> {
   });
 
   invalidarMapaCompromisosLotes();
-  invalidateMemoryCache(['garantias', 'lotes', 'bienes', 'dashboard', 'reportes']);
+  invalidateMemoryCache([
+    'garantias-pendientes',
+    'garantias',
+    'lotes',
+    'bienes',
+    'dashboard',
+    'estadisticas_panel',
+    'reportes',
+    'client-detail',
+  ]);
   return result;
 }
 
@@ -2293,22 +2628,30 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
           throw new Error(`El lote ${serverLote.numeroLote} se encuentra ${serverLote.estado.toLowerCase()} y no puede ser dado en garantía.`);
         }
 
-        // Calcular con precisión la disponibilidad real reconociendo compromisos en otras garantías
+        // Calcular con precisión la disponibilidad real reconociendo compromisos en otras garantías (activas o pendientes)
+        const serverLoteCatalogo = lotesActuales.find(
+          (l) =>
+            (serverLote.idLote && String(l.idLote).trim().toLowerCase() === String(serverLote.idLote).trim().toLowerCase()) ||
+            (serverLote.numeroLote && String(l.numeroLote).trim().toLowerCase() === String(serverLote.numeroLote).trim().toLowerCase())
+        );
+
         const dispInfo = await obtenerDisponibilidadLote(
           {
             idLote: serverLote.idLote,
             numeroLote: serverLote.numeroLote,
-            hectareas: serverLote.hectareas,
+            hectareas: serverLoteCatalogo?.hectareas ?? serverLote.hectareas,
+            hectareasEnGarantia: serverLoteCatalogo?.hectareasEnGarantia ?? serverLote.hectareasEnGarantia,
             cuentaPropietario: serverLote.cuentaPropietario || reqLote.cuentaPropietario,
             propietario: serverLote.propietario || reqLote.propietario,
           },
-          garantia.idGarantia
+          garantia.idGarantia,
+          origLoteInThisGarantia ? Number(origLoteInThisGarantia.hectareas) || 0 : 0
         );
 
         const maxPermitido = dispInfo.hectareasDisponiblesParaEstaGarantia;
         if (Number(reqLote.hectareas) > maxPermitido + 1e-6) {
           const enOtras = dispInfo.hectareasEnOtrasGarantias;
-          const detalleOtras = enOtras > 0 ? ` (${formatHectareas(enOtras)} ha comprometidas en otra garantía activa)` : '';
+          const detalleOtras = enOtras > 0 ? ` (${formatHectareas(enOtras)} ha comprometidas en otra garantía)` : '';
           throw new Error(
             `El lote ${serverLote.numeroLote} solo tiene ${formatHectareas(maxPermitido)} hectáreas disponibles para esta garantía${detalleOtras}.`
           );
@@ -2419,13 +2762,72 @@ export async function editarGarantia(garantia: Partial<Garantia>): Promise<any> 
   });
 
   invalidarMapaCompromisosLotes();
-  invalidateMemoryCache(['garantias', 'lotes', 'bienes', 'dashboard', 'reportes']);
+  invalidateMemoryCache([
+    'garantias-pendientes',
+    'garantias',
+    'lotes',
+    'bienes',
+    'dashboard',
+    'estadisticas_panel',
+    'reportes',
+    'client-detail',
+  ]);
+  return result;
+}
+
+export async function activarGarantia(idGarantia: string): Promise<any> {
+  if (!idGarantia || !idGarantia.trim()) {
+    throw new Error('El ID de la garantía es requerido para activarla.');
+  }
+  const result = await callAppsScript('activarGarantia', { idGarantia: idGarantia.trim() });
+  invalidarMapaCompromisosLotes();
+  invalidateMemoryCache([
+    'garantias-pendientes',
+    'garantias',
+    'lotes',
+    'bienes',
+    'dashboard',
+    'estadisticas_panel',
+    'reportes',
+    'client-detail',
+  ]);
+  return result;
+}
+
+export async function reactivarGarantia(idGarantia: string): Promise<any> {
+  if (!idGarantia || !idGarantia.trim()) {
+    throw new Error('El ID de la garantía liberada es requerido para reactivarla.');
+  }
+  const result = await callAppsScript('reactivarGarantia', { idGarantia: idGarantia.trim() });
+  invalidarMapaCompromisosLotes();
+  invalidateMemoryCache([
+    'garantias-liberadas',
+    'garantias',
+    'garantias-pendientes',
+    'lotes',
+    'bienes',
+    'dashboard',
+    'estadisticas_panel',
+    'reportes',
+    'client-detail',
+  ]);
   return result;
 }
 
 export async function liberarGarantia(idGarantia: string): Promise<any> {
   const result = await callAppsScript('liberarGarantia', { idGarantia });
-  invalidateMemoryCache(['garantias', 'garantias-liberadas', 'lotes', 'bienes', 'dashboard', 'reportes', 'client-detail']);
+  invalidarMapaCompromisosLotes();
+  invalidateMemoryCache([
+    'garantias',
+    'garantias-pendientes',
+    'garantias-liberadas',
+    'lotes',
+    'bienes',
+    'dashboard',
+    'estadisticas_panel',
+    'reportes',
+    'client-detail',
+  ]);
   return result;
 }
 
@@ -2438,7 +2840,18 @@ export async function eliminarGarantia(idGarantia: string, password: string): Pr
     idGarantia: idGarantia.trim(),
     password: password.trim(),
   });
-  invalidateMemoryCache(['garantias', 'garantias-liberadas', 'lotes', 'bienes', 'dashboard', 'reportes', 'client-detail']);
+  invalidarMapaCompromisosLotes();
+  invalidateMemoryCache([
+    'garantias',
+    'garantias-pendientes',
+    'garantias-liberadas',
+    'lotes',
+    'bienes',
+    'dashboard',
+    'estadisticas_panel',
+    'reportes',
+    'client-detail',
+  ]);
   return result;
 }
 
@@ -2927,23 +3340,33 @@ export async function getConfiguracion(forceRefresh: boolean = false): Promise<C
   }
 
   try {
-    const res = await callAppsScript<{ institucion: string }>('obtenerConfiguracionPublica', {});
+    const res = await callAppsScript<{
+      institucion?: string;
+      diasAlertaPendientes?: number | string;
+    }>('obtenerConfiguracionPublica', {});
+
+    const rawDias = res?.diasAlertaPendientes;
+    const parsedDias =
+      typeof rawDias === 'number' && !isNaN(rawDias) && rawDias > 0
+        ? Math.floor(rawDias)
+        : rawDias !== undefined && rawDias !== null && !isNaN(Number(rawDias)) && Number(rawDias) > 0
+        ? Math.floor(Number(rawDias))
+        : 30;
+
     if (res && res.institucion) {
       inMemorySession.institucion = res.institucion;
-      const cfg = {
-        nombreInstitucion: res.institucion,
-      };
-      setToMemoryCache('configuracion', cfg);
-      return cfg;
     }
-    const cfg = {
-      nombreInstitucion: inMemorySession.institucion,
+
+    const cfg: ConfiguracionSistema = {
+      nombreInstitucion: res?.institucion || inMemorySession.institucion,
+      diasAlertaPendientes: parsedDias,
     };
     setToMemoryCache('configuracion', cfg);
     return cfg;
   } catch {
     return {
       nombreInstitucion: inMemorySession.institucion,
+      diasAlertaPendientes: 30,
     };
   }
 }
@@ -2952,6 +3375,7 @@ export async function updateConfiguracion(params: {
   contrasenaActual?: string;
   nuevaContrasena?: string;
   nombreInstitucion?: string;
+  diasAlertaPendientes?: number;
 }): Promise<void> {
   const datos: Record<string, any> = {};
   if (params.nombreInstitucion) {
@@ -2960,10 +3384,17 @@ export async function updateConfiguracion(params: {
   if (params.nuevaContrasena) {
     datos.password = params.nuevaContrasena.trim();
   }
+  if (params.diasAlertaPendientes !== undefined) {
+    const dias = Math.floor(Number(params.diasAlertaPendientes));
+    if (isNaN(dias) || dias < 1) {
+      throw new Error('Los días de alerta para garantías pendientes deben ser un número mayor o igual a 1.');
+    }
+    datos.diasAlertaPendientes = dias;
+  }
 
   await callAppsScript('guardarConfiguracion', datos);
   if (params.nombreInstitucion) {
     inMemorySession.institucion = params.nombreInstitucion.trim();
   }
-  invalidateMemoryCache('configuracion');
+  invalidateMemoryCache(['configuracion', 'garantias-pendientes']);
 }

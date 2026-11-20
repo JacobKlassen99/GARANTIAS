@@ -24,11 +24,9 @@ interface UniqueSigner {
 export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
   garantia: garantiaProp,
   isLiberada: isLiberadaProp,
-  fechaLiberacion: fechaLiberacionProp,
   onClose,
 }) => {
   const isLiberada = isLiberadaProp || !!(garantiaProp as GarantiaLiberada).fechaLiberacion;
-  const fechaLiberacion = fechaLiberacionProp || (garantiaProp as GarantiaLiberada).fechaLiberacion;
 
   // Estados de carga de datos completos desde el backend
   const [fullGarantia, setFullGarantia] = useState<Garantia | GarantiaLiberada | null>(null);
@@ -52,19 +50,17 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
     let isMounted = true;
 
     async function cargarGarantiaCompleta() {
-      if (
-        Array.isArray(garantiaProp.lotes) &&
-        garantiaProp.lotes.length > 0 &&
-        Array.isArray(garantiaProp.bienes)
-      ) {
-        if (isMounted) {
-          setFullGarantia(garantiaProp);
-          setIsLoading(false);
-        }
-        return;
-      }
+      const hasEmbeddedLotes = Array.isArray(garantiaProp.lotes) && garantiaProp.lotes.length > 0;
+      const hasEmbeddedBienes = Array.isArray(garantiaProp.bienes) && garantiaProp.bienes.length > 0;
+      const isUnsavedPreview =
+        !garantiaProp.idGarantia || garantiaProp.idGarantia === 'PREVIEW-TEMP';
 
-      if (!garantiaProp.idGarantia) {
+      if (
+        isUnsavedPreview ||
+        (Array.isArray(garantiaProp.lotes) &&
+          Array.isArray(garantiaProp.bienes) &&
+          (hasEmbeddedLotes || hasEmbeddedBienes))
+      ) {
         if (isMounted) {
           setFullGarantia(garantiaProp);
           setIsLoading(false);
@@ -319,20 +315,12 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
     acreedorLegalTexto = 'los Acreedores indicados en el detalle adjunto';
   }
 
-  // Componente que genera la Hoja de Documento Oficial de Garantía
+  // Componente que genera la Hoja de Documento Oficial de Garantía (sin marcas ni palabras de estado)
   const renderOfficialDocumentSheet = () => (
     <div
       id="printable-official-document"
       className="p-6 sm:p-10 bg-white text-slate-900 font-serif text-[11pt] leading-normal select-text relative max-w-4xl mx-auto"
     >
-      {isLiberada && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-[0.06] select-none z-0 overflow-hidden">
-          <span className="text-7xl sm:text-9xl font-black uppercase tracking-widest text-slate-900 -rotate-45">
-            LIBERADA
-          </span>
-        </div>
-      )}
-
       {/* Encabezado Oficial */}
       <div className="text-center pb-3 border-b-2 border-slate-900 mb-4 relative z-10">
         <h1 className="text-base sm:text-lg font-black uppercase tracking-wider">
@@ -345,21 +333,10 @@ export const ImpresionGarantia: React.FC<ImpresionGarantiaProps> = ({
           <div className="inline-block border-2 border-slate-900 px-5 py-0.5 font-black text-sm uppercase tracking-wider bg-slate-50">
             {documentTitle}
           </div>
-          {isLiberada && (
-            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 bg-amber-50 border border-amber-300 text-amber-900 font-sans font-bold text-[11px] uppercase tracking-wider rounded">
-              <span>COPIA DE CONSULTA — GARANTÍA LIBERADA</span>
-            </div>
-          )}
         </div>
         <div className="mt-2 text-right text-xs font-mono">
           <strong>N.º Solicitud:</strong> {currentGarantia.numeroSolicitud || '—'} &nbsp;|&nbsp;{' '}
           <strong>Fecha:</strong> {formatFecha(currentGarantia.fecha)}
-          {isLiberada && fechaLiberacion && (
-            <>
-              {' '}&nbsp;|&nbsp;{' '}
-              <strong className="text-amber-900">Liberada el:</strong> {formatFecha(fechaLiberacion)}
-            </>
-          )}
         </div>
       </div>
 

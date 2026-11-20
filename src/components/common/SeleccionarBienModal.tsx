@@ -112,31 +112,44 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
   const [targetBienGarantiaCon, setTargetBienGarantiaCon] = useState<TipoGarantiaCon>(defaultGarantiaConTipo);
   const [targetBienCliente, setTargetBienCliente] = useState<Cliente | null>(defaultGarantiaCliente);
 
-  // Cargar lista base de bienes al abrir el modal si no están disponibles
+  // Cargar y refrescar lista de bienes al abrir el modal para reflejar reservas pendientes/activas
   useEffect(() => {
     if (!isOpen) return;
 
+    let isCancelled = false;
     setLoadError(false);
     setSearchTerm('');
     setTargetBien(null);
 
-    if (Array.isArray(propAvailableBienes) && propAvailableBienes.length > 0) {
+    const hasInitial = Array.isArray(propAvailableBienes) && propAvailableBienes.length > 0;
+    if (hasInitial) {
       setInternalAvailableBienes(propAvailableBienes);
       setIsLoading(false);
     } else {
       setIsLoading(true);
-      obtenerBienes()
-        .then((bienes) => {
-          setInternalAvailableBienes(Array.isArray(bienes) ? bienes : []);
-        })
-        .catch(() => {
-          setLoadError(true);
-        })
-        .finally(() => {
-          setIsLoading(false);
-        });
     }
-  }, [isOpen, propAvailableBienes]);
+
+    obtenerBienes(true)
+      .then((bienes) => {
+        if (!isCancelled && Array.isArray(bienes)) {
+          setInternalAvailableBienes(bienes);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled && !hasInitial) {
+          setLoadError(true);
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen]);
 
   // Actualizar si propAvailableBienes cambia externamente y trae datos
   useEffect(() => {
@@ -293,7 +306,10 @@ export const SeleccionarBienModal: React.FC<SeleccionarBienModalProps> = ({
               if (isAlreadySelected) reason = 'Ya añadido en este formulario';
               else if (isBlocked) reason = `Bloqueado administrativamente (${bien.motivoBloqueo || 'Sin motivo'})`;
               else if (isInactive) reason = 'Bien inactivo';
-              else if (isAlreadyInWarranty) reason = `Ya está en la garantía activa ${bien.solicitudGarantiaActiva || ''}`;
+              else if (isAlreadyInWarranty)
+                reason = bien.solicitudGarantiaActiva
+                  ? `Ya está reservado / comprometido en la garantía ${bien.solicitudGarantiaActiva}`
+                  : 'Ya está reservado / comprometido en otra garantía';
 
               return (
                 <div

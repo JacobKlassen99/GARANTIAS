@@ -2,6 +2,7 @@ import React from 'react';
 import {
   LayoutDashboard,
   FilePlus,
+  Clock,
   FileCheck2,
   Archive,
   Users,
@@ -14,6 +15,7 @@ import {
 export type NavSection =
   | 'dashboard'
   | 'nueva-garantia'
+  | 'garantias-pendientes'
   | 'garantias'
   | 'garantias-liberadas'
   | 'clientes'
@@ -43,6 +45,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentSection, onSelectSectio
       id: 'garantias',
       label: 'Garantías Activas',
       icon: <FileCheck2 className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'garantias-pendientes',
+      label: 'Garantías pendientes',
+      icon: <Clock className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'garantias-liberadas',

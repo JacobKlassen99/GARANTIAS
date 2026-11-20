@@ -174,3 +174,55 @@ export function calcularEstadoVencimiento(fechaVencimientoStr?: string | null): 
     return { estado: 'Vigente', diasRestantes };
   }
 }
+
+/**
+ * Calcula los días transcurridos desde la fecha de registro/emisión de una garantía pendiente hasta hoy.
+ */
+export function calcularDiasPendientes(fechaStr?: string | null): number {
+  if (!fechaStr || !String(fechaStr).trim() || fechaStr === '—') {
+    return 0;
+  }
+
+  const cleanDate = String(fechaStr).split('T')[0].split(' ')[0].trim();
+  let y = 0;
+  let m = 0;
+  let d = 0;
+
+  if (cleanDate.includes('-')) {
+    const parts = cleanDate.split('-').map(Number);
+    if (parts.length === 3) {
+      y = parts[0];
+      m = parts[1] - 1;
+      d = parts[2];
+    }
+  } else if (cleanDate.includes('/')) {
+    const parts = cleanDate.split('/').map(Number);
+    if (parts.length === 3) {
+      if (parts[0] > 1000) {
+        y = parts[0];
+        m = parts[1] - 1;
+        d = parts[2];
+      } else {
+        d = parts[0];
+        m = parts[1] - 1;
+        y = parts[2];
+      }
+    }
+  }
+
+  if (isNaN(y) || isNaN(m) || isNaN(d) || y <= 0 || d <= 0) {
+    const parsed = new Date(fechaStr);
+    if (isNaN(parsed.getTime())) return 0;
+    y = parsed.getFullYear();
+    m = parsed.getMonth();
+    d = parsed.getDate();
+  }
+
+  const startDate = new Date(y, m, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const diffMs = today.getTime() - startDate.getTime();
+  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+}
+

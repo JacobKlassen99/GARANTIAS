@@ -11,14 +11,18 @@ import {
   Layers,
   X,
   FileCheck2,
+  RotateCcw,
+  CheckCircle2,
 } from 'lucide-react';
 import { GarantiaLiberada, QueryParams } from '../types';
 import {
   listarGarantiasLiberadas,
   obtenerGarantiaLiberadaCompleta,
+  reactivarGarantia,
 } from '../services/backend';
 import { ImpresionGarantia } from './ImpresionGarantia';
 import { VerBienesLotesModal } from '../components/common/VerBienesLotesModal';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 import {
   formatFecha,
   formatPropietario,
@@ -48,6 +52,12 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
   const [garantiaParaBienesLotes, setGarantiaParaBienesLotes] = useState<GarantiaLiberada | null>(null);
   const [garantiaParaImprimir, setGarantiaParaImprimir] = useState<GarantiaLiberada | null>(null);
   const [isCargandoDetalle, setIsCargandoDetalle] = useState<boolean>(false);
+
+  // Reactivación de garantía liberada
+  const [garantiaToReactivar, setGarantiaToReactivar] = useState<GarantiaLiberada | null>(null);
+  const [isReactivando, setIsReactivando] = useState<boolean>(false);
+  const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
 
   const loadData = async (forceRefresh: boolean = false) => {
     if (forceRefresh) {
@@ -94,7 +104,10 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
 
   // Abrir vista previa de impresión trayendo relaciones si no están cargadas
   const handleAbrirImpresion = async (g: GarantiaLiberada) => {
-    if (Array.isArray(g.lotes) && g.lotes.length > 0) {
+    const hasLoadedItems =
+      (Array.isArray(g.lotes) && g.lotes.length > 0) ||
+      (Array.isArray(g.bienes) && g.bienes.length > 0);
+    if (hasLoadedItems) {
       setGarantiaParaImprimir(g);
       return;
     }
@@ -106,6 +119,32 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
       setGarantiaParaImprimir(g);
     } finally {
       setIsCargandoDetalle(false);
+    }
+  };
+
+  // Confirmar reactivación de garantía liberada (el backend valida disponibilidad de hectáreas y bienes)
+  const handleConfirmReactivar = async () => {
+    if (!garantiaToReactivar) return;
+    setIsReactivando(true);
+    setActionErrorMessage(null);
+    setActionSuccessMessage(null);
+    try {
+      const numSol = garantiaToReactivar.numeroSolicitud || garantiaToReactivar.idGarantia;
+      await reactivarGarantia(garantiaToReactivar.idGarantia);
+      setGarantiaToReactivar(null);
+      setActionSuccessMessage(
+        `Garantía N.º ${numSol} reactivada con éxito. Ha regresado a Garantías Activas conservando sus datos y N.º de solicitud.`
+      );
+      setTimeout(() => setActionSuccessMessage(null), 5500);
+      loadData(true);
+    } catch (err: any) {
+      setGarantiaToReactivar(null);
+      setActionErrorMessage(
+        err?.message ||
+          'No se pudo reactivar la garantía porque uno o más terrenos o bienes no se encuentran disponibles.'
+      );
+    } finally {
+      setIsReactivando(false);
     }
   };
 
@@ -193,6 +232,39 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
         </div>
       </div>
 
+      {actionSuccessMessage && (
+        <div className="p-2.5 bg-emerald-50 border border-emerald-300 rounded flex items-center justify-between text-xs text-emerald-900">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span className="font-semibold">{actionSuccessMessage}</span>
+          </div>
+          <button
+            onClick={() => setActionSuccessMessage(null)}
+            className="text-emerald-700 hover:text-emerald-900 font-bold p-1 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {actionErrorMessage && (
+        <div className="p-2.5 bg-red-50 border border-red-300 rounded flex items-start justify-between gap-2 text-xs text-red-900">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <strong className="font-bold">No se pudo reactivar la garantía:</strong>{' '}
+              <span>{actionErrorMessage}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setActionErrorMessage(null)}
+            className="text-red-700 hover:text-red-900 font-bold p-1 cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {backendMessage && garantias.length > 0 && (
         <div className="p-2.5 bg-amber-50 border border-amber-200 rounded flex items-center justify-between text-xs text-amber-800">
           <div className="flex items-center gap-2">
@@ -221,7 +293,7 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Prestatario (Cuenta en Garantía)</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200">Garantía Con</th>
                 <th className="py-1.5 px-3 font-bold border-r border-slate-200 w-28">Tipo de Garantía</th>
-                <th className="py-1.5 px-3 font-bold text-center w-36">Acciones</th>
+                <th className="py-1.5 px-3 font-bold text-center w-48">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal">
@@ -312,11 +384,22 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
                           </button>
                           <button
                             onClick={() => handleAbrirImpresion(garantia)}
-                            title="Imprimir Copia de Consulta Oficial (Liberada)"
+                            title="Imprimir contrato"
                             disabled={isCargandoDetalle}
                             className="p-1 text-slate-700 hover:text-slate-950 hover:bg-slate-100 rounded transition cursor-pointer disabled:opacity-50"
                           >
                             <Printer className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActionErrorMessage(null);
+                              setGarantiaToReactivar(garantia);
+                            }}
+                            title="Reactivar garantía (verifica disponibilidad antes de volver a Garantías Activas)"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded transition cursor-pointer"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>Reactivar</span>
                           </button>
                         </div>
                       </td>
@@ -475,7 +558,7 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
                   <span>Ver Bienes y Lotes</span>
                 </button>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -483,15 +566,28 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
                       setGarantiaParaVer(null);
                       handleAbrirImpresion(g);
                     }}
-                    className="px-3 py-1.5 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded flex items-center gap-1.5"
+                    className="px-3 py-1.5 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded flex items-center gap-1.5 cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5" />
-                    <span>Imprimir Copia</span>
+                    <span>Imprimir Contrato</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const g = garantiaParaVer;
+                      setGarantiaParaVer(null);
+                      setActionErrorMessage(null);
+                      setGarantiaToReactivar(g);
+                    }}
+                    className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reactivar Garantía</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setGarantiaParaVer(null)}
-                    className="px-3 py-1.5 text-xs text-slate-600 bg-slate-100 hover:bg-slate-200 rounded"
+                    className="px-3 py-1.5 text-xs text-slate-600 bg-slate-100 hover:bg-slate-200 rounded cursor-pointer"
                   >
                     Cerrar
                   </button>
@@ -512,15 +608,30 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
         />
       )}
 
-      {/* VISTA DE IMPRESIÓN OFICIAL (COPIA DE CONSULTA LIBERADA) */}
+      {/* VISTA DE IMPRESIÓN OFICIAL */}
       {garantiaParaImprimir && (
         <ImpresionGarantia
           garantia={garantiaParaImprimir}
           isLiberada={true}
-          fechaLiberacion={garantiaParaImprimir.fechaLiberacion}
           onClose={() => setGarantiaParaImprimir(null)}
         />
       )}
+
+      {/* CONFIRMAR REACTIVACIÓN DE GARANTÍA */}
+      <ConfirmModal
+        isOpen={!!garantiaToReactivar}
+        title="Reactivar Garantía"
+        message={`¿Está seguro de reactivar la garantía N.º "${
+          garantiaToReactivar?.numeroSolicitud || garantiaToReactivar?.idGarantia || ''
+        }"? Antes de reactivarla, el sistema verificará si las hectáreas y los bienes comprometidos siguen disponibles. Si alguno ya está en uso, la reactivación será bloqueada.`}
+        confirmLabel="Reactivar Garantía"
+        isDestructive={false}
+        isLoading={isReactivando}
+        onCancel={() => {
+          if (!isReactivando) setGarantiaToReactivar(null);
+        }}
+        onConfirm={handleConfirmReactivar}
+      />
     </div>
   );
 };
