@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin,
   Search,
@@ -22,6 +22,9 @@ import {
   setLoteBloqueo,
   getClientes,
   getFromMemoryCache,
+  obtenerTotalesLotesFiltrados,
+  getTotalesLotesFiltradosCacheKey,
+  TotalesLotesFiltrados,
 } from '../services/backend';
 import { ClientSearchAutocomplete } from '../components/common/ClientSearchAutocomplete';
 import { ConfirmModal } from '../components/common/ConfirmModal';
@@ -57,6 +60,9 @@ export const LotesList: React.FC<LotesListProps> = ({
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [totalesFiltrados, setTotalesFiltrados] = useState<TotalesLotesFiltrados | null>(null);
+  const [isLoadingTotals, setIsLoadingTotals] = useState(false);
+  const loadSeqRef = useRef(0);
 
   // Modal Añadir / Editar
   const [isModalOpen, setIsModalOpen] = useState(initialOpenNew);
@@ -119,12 +125,20 @@ export const LotesList: React.FC<LotesListProps> = ({
     targetSearch = debouncedSearch,
     forceRefresh = false
   ) => {
+    const seq = ++loadSeqRef.current;
+    const cleanSearch = targetSearch.trim();
     const params: QueryParams = {
       page: targetPage,
       pageSize,
-      search: targetSearch.trim() || undefined,
-      filters: filtroEstado !== 'todos' ? { estado: filtroEstado } : undefined,
+      search: cleanSearch || undefined,
+      filters: filtroEstado !== 'todos' ? { Estado: filtroEstado } : undefined,
     };
+
+    const totalsCacheKey = getTotalesLotesFiltradosCacheKey(cleanSearch, filtroEstado);
+
+    const cachedTotals = !forceRefresh
+      ? getFromMemoryCache<TotalesLotesFiltrados>('lotes', totalsCacheKey)
+      : null;
 
     if (!forceRefresh) {
       const cached = getFromMemoryCache<PaginatedResponse<Lote>>('lotes', params);
@@ -136,6 +150,15 @@ export const LotesList: React.FC<LotesListProps> = ({
         setToRecord(cached.to || (cached.data || []).length);
         setHasLoadedOnce(true);
       }
+      if (cachedTotals) {
+        setTotalesFiltrados(cachedTotals);
+        setIsLoadingTotals(false);
+      } else {
+        setTotalesFiltrados(null);
+        setIsLoadingTotals(true);
+      }
+    } else {
+      setIsLoadingTotals(true);
     }
 
     if (lotes.length === 0 && !hasLoadedOnce) {
@@ -147,6 +170,8 @@ export const LotesList: React.FC<LotesListProps> = ({
 
     try {
       const res = await getLotes(params, forceRefresh);
+      if (seq !== loadSeqRef.current) return;
+
       const items = Array.isArray(res?.data) ? res.data : [];
       setLotes(items);
       setTotal(typeof res?.total === 'number' ? res.total : items.length);
@@ -154,19 +179,49 @@ export const LotesList: React.FC<LotesListProps> = ({
       setFromRecord(typeof res?.from === 'number' ? res.from : items.length > 0 ? (targetPage - 1) * pageSize + 1 : 0);
       setToRecord(typeof res?.to === 'number' ? res.to : Math.min(targetPage * pageSize, res?.total || items.length));
       setHasLoadedOnce(true);
+
+      // Calcular totales de TODOS los lotes filtrados (incluyendo múltiples páginas)
+      if (!cachedTotals || forceRefresh) {
+        setIsLoadingTotals(true);
+        try {
+          const totals = await obtenerTotalesLotesFiltrados(
+            {
+              search: cleanSearch,
+              estado: filtroEstado,
+              pageSize,
+              currentPageResult: res,
+            },
+            forceRefresh
+          );
+          if (seq !== loadSeqRef.current) return;
+          setTotalesFiltrados(totals);
+        } catch {
+          if (seq !== loadSeqRef.current) return;
+          setTotalesFiltrados(null);
+        } finally {
+          if (seq === loadSeqRef.current) {
+            setIsLoadingTotals(false);
+          }
+        }
+      }
     } catch {
+      if (seq !== loadSeqRef.current) return;
       if (lotes.length === 0) {
         setBackendMessage('No se pudo cargar la información.');
         setTotal(0);
         setTotalPages(1);
         setFromRecord(0);
         setToRecord(0);
+        setTotalesFiltrados(null);
       } else {
         setBackendMessage('No se pudo actualizar la información.');
       }
+      setIsLoadingTotals(false);
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   };
 
@@ -648,6 +703,49 @@ export const LotesList: React.FC<LotesListProps> = ({
                 </tr>
               )}
             </tbody>
+            {hasLoadedOnce && !(backendMessage && lotes.length === 0) && (
+              <tfoot className="bg-slate-100 sticky bottom-0 z-10 border-t-2 border-slate-300 shadow-[inset_0_2px_0_0_rgb(203_213_225)]">
+                <tr className="font-bold text-xs text-slate-900">
+                  <td
+                    colSpan={4}
+                    className="py-2 px-3 uppercase tracking-tight border-r border-slate-200 whitespace-nowrap"
+                  >
+                    TOTAL FILTRADO (
+                    {(totalesFiltrados ? totalesFiltrados.cantidadLotes : total).toLocaleString('es-BO')}{' '}
+                    {(totalesFiltrados ? totalesFiltrados.cantidadLotes : total) === 1 ? 'lote' : 'lotes'})
+                  </td>
+                  <td className="py-2 px-3 font-mono text-right text-slate-900 border-r border-slate-200 whitespace-nowrap">
+                    {isLoadingTotals && !totalesFiltrados ? (
+                      <span className="text-[11px] font-normal text-slate-500">Calculando...</span>
+                    ) : totalesFiltrados ? (
+                      formatHectareas(totalesFiltrados.hectareasTotales)
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="py-2 px-3 font-mono text-right text-purple-900 border-r border-slate-200 whitespace-nowrap">
+                    {isLoadingTotals && !totalesFiltrados ? (
+                      <span className="text-[11px] font-normal text-slate-400">...</span>
+                    ) : totalesFiltrados ? (
+                      formatHectareas(totalesFiltrados.hectareasEnGarantia)
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="py-2 px-3 font-mono text-right text-emerald-800 border-r border-slate-200 whitespace-nowrap">
+                    {isLoadingTotals && !totalesFiltrados ? (
+                      <span className="text-[11px] font-normal text-slate-400">...</span>
+                    ) : totalesFiltrados ? (
+                      formatHectareas(totalesFiltrados.hectareasDisponibles)
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="py-2 px-3 border-r border-slate-200" />
+                  <td className="py-2 px-3" />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Archive,
   Search,
@@ -23,6 +23,11 @@ import {
 import { ImpresionGarantia } from './ImpresionGarantia';
 import { VerBienesLotesModal } from '../components/common/VerBienesLotesModal';
 import { ConfirmModal } from '../components/common/ConfirmModal';
+import { OrdenarPorDropdown } from '../components/common/OrdenarPorDropdown';
+import {
+  DEFAULT_GARANTIA_SORT,
+  GarantiaSortConfig,
+} from '../utils/garantiaSort';
 import {
   formatFecha,
   formatPropietario,
@@ -40,12 +45,15 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
   const [hasLoadedOnce, setHasLoadedOnce] = useState<boolean>(false);
 
-  // Paginación y búsqueda
+  // Paginación, búsqueda y ordenamiento
   const [search, setSearch] = useState<string>('');
+  const [appliedSearch, setAppliedSearch] = useState<string>('');
+  const [sortConfig, setSortConfig] = useState<GarantiaSortConfig>(DEFAULT_GARANTIA_SORT);
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(200);
   const [total, setTotal] = useState<number>(0);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const requestSeqRef = useRef(0);
 
   // Estados de modales
   const [garantiaParaVer, setGarantiaParaVer] = useState<GarantiaLiberada | null>(null);
@@ -60,10 +68,11 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
   const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
 
   const loadData = async (forceRefresh: boolean = false) => {
-    if (forceRefresh) {
-      setIsRefreshing(true);
-    } else {
+    const reqId = ++requestSeqRef.current;
+    if (garantias.length === 0 && !hasLoadedOnce) {
       setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
     }
     setBackendMessage(null);
 
@@ -71,35 +80,50 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
       const params: QueryParams = {
         page,
         pageSize,
-        search: search.trim() || undefined,
-        sortField: 'fechaLiberacion',
-        sortDirection: 'desc',
+        search: appliedSearch || undefined,
+        sortField: sortConfig.field,
+        sortDirection: sortConfig.direction,
       };
       const res = await listarGarantiasLiberadas(params, forceRefresh);
+      if (reqId !== requestSeqRef.current) return;
       const items = Array.isArray(res?.data) ? res.data : [];
       setGarantias(items);
       setTotal(typeof res?.total === 'number' ? Math.max(res.total, items.length) : items.length);
       setHasLoadedOnce(true);
     } catch {
+      if (reqId !== requestSeqRef.current) return;
       if (garantias.length === 0) {
         setBackendMessage('No se pudo cargar el historial de garantías liberadas.');
       } else {
         setBackendMessage('No se pudo actualizar la información.');
       }
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (reqId === requestSeqRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
     loadData(false);
-  }, [page]);
+  }, [page, appliedSearch, sortConfig]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
-    loadData(false);
+    setAppliedSearch(search.trim());
+  };
+
+  const handleClearSearch = () => {
+    setSearch('');
+    setAppliedSearch('');
+    setPage(1);
+  };
+
+  const handleApplySort = (next: GarantiaSortConfig) => {
+    setSortConfig(next);
+    setPage(1);
   };
 
   // Abrir vista previa de impresión trayendo relaciones si no están cargadas
@@ -187,9 +211,9 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
       </div>
 
       {/* Barra de Búsqueda Backend */}
-      <div className="bg-white p-2.5 rounded border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-        <form onSubmit={handleSearchSubmit} className="flex-1 flex items-center gap-2 max-w-xl">
-          <div className="relative flex-1">
+      <div className="bg-white p-2.5 rounded border border-slate-200 shadow-2xs flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2">
+        <form onSubmit={handleSearchSubmit} className="flex-1 flex flex-wrap items-center gap-2 max-w-2xl">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
             <input
               type="text"
@@ -199,28 +223,31 @@ export const GarantiasLiberadasList: React.FC<GarantiasLiberadasListProps> = ({ 
               className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-700 focus:border-amber-700"
             />
           </div>
-          <button
-            type="submit"
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded transition cursor-pointer"
-          >
-            Buscar
-          </button>
-          {search && (
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              type="button"
-              onClick={() => {
-                setSearch('');
-                setPage(1);
-                loadData(false);
-              }}
-              className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+              type="submit"
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded transition cursor-pointer"
             >
-              Limpiar
+              Buscar
             </button>
-          )}
+            <OrdenarPorDropdown
+              value={sortConfig}
+              onApply={handleApplySort}
+              disabled={isLoading && !hasLoadedOnce}
+            />
+            {(search || appliedSearch) && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
         </form>
 
-        <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between sm:justify-end">
+        <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between lg:justify-end">
           {isRefreshing && (
             <span className="text-[11px] font-medium text-amber-800 flex items-center gap-1">
               <RefreshCw className="w-3 h-3 animate-spin" /> Actualizando datos...

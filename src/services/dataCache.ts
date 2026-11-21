@@ -52,6 +52,17 @@ export function getInFlightRequest<T>(key: string): Promise<T> | undefined {
   return inFlightRequests.get(key) as Promise<T> | undefined;
 }
 
+function serializeCacheValue(val: any): string {
+  if (val === null) return 'null';
+  if (val === undefined) return 'undefined';
+  if (typeof val !== 'object') return String(val);
+  if (Array.isArray(val)) {
+    return `[${val.map(serializeCacheValue).join(',')}]`;
+  }
+  const keys = Object.keys(val).sort();
+  return `{${keys.map((k) => `${k}:${serializeCacheValue(val[k])}`).join(',')}}`;
+}
+
 /**
  * Genera una clave única normalizada para almacenar resultados de consultas
  */
@@ -61,7 +72,7 @@ export function getCacheKey(namespace: string, params?: Record<string, any> | st
   try {
     const sortedKey = Object.keys(params)
       .sort()
-      .map((k) => `${k}=${params[k]}`)
+      .map((k) => `${k}=${serializeCacheValue(params[k])}`)
       .join('&');
     return `${namespace}:${sortedKey}`;
   } catch {

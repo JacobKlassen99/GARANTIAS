@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileCheck2,
   Search,
@@ -25,6 +25,11 @@ import { ImpresionGarantia } from './ImpresionGarantia';
 import { EditarGarantiaModal } from '../components/common/EditarGarantiaModal';
 import { VerBienesLotesModal } from '../components/common/VerBienesLotesModal';
 import { EliminarGarantiaModal } from '../components/common/EliminarGarantiaModal';
+import { OrdenarPorDropdown } from '../components/common/OrdenarPorDropdown';
+import {
+  DEFAULT_GARANTIA_SORT,
+  GarantiaSortConfig,
+} from '../utils/garantiaSort';
 import {
   formatFecha,
   formatHectareas,
@@ -43,10 +48,13 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
   const [page, setPage] = useState(1);
   const [pageSize] = useState(200);
   const [search, setSearch] = useState(initialSearch || '');
+  const [appliedSearch, setAppliedSearch] = useState((initialSearch || '').trim());
+  const [sortConfig, setSortConfig] = useState<GarantiaSortConfig>(DEFAULT_GARANTIA_SORT);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
+  const requestSeqRef = useRef(0);
 
   // Garantía para imprimir
   const [garantiaParaImprimir, setGarantiaParaImprimir] = useState<Garantia | null>(null);
@@ -73,6 +81,7 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
 
   const loadData = async (forceRefresh: boolean = false) => {
+    const reqId = ++requestSeqRef.current;
     if (garantias.length === 0 && !hasLoadedOnce) {
       setIsLoading(true);
     } else {
@@ -84,32 +93,39 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
       const params: QueryParams = {
         page,
         pageSize,
-        search: search.trim() || undefined,
+        search: appliedSearch || undefined,
+        sortField: sortConfig.field,
+        sortDirection: sortConfig.direction,
       };
       const res = await getGarantias(params, forceRefresh);
+      if (reqId !== requestSeqRef.current) return;
       const items = Array.isArray(res?.data) ? res.data : [];
       setGarantias(items);
       setTotal(typeof res?.total === 'number' ? Math.max(res.total, items.length) : items.length);
       setHasLoadedOnce(true);
     } catch {
+      if (reqId !== requestSeqRef.current) return;
       if (garantias.length === 0) {
         setBackendMessage('No se pudo cargar la información.');
       } else {
         setBackendMessage('No se pudo actualizar la información.');
       }
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (reqId === requestSeqRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
     loadData(false);
-  }, [page]);
+  }, [page, appliedSearch, sortConfig]);
 
   useEffect(() => {
     if (initialSearch !== undefined) {
       setSearch(initialSearch);
+      setAppliedSearch(initialSearch.trim());
       setPage(1);
     }
   }, [initialSearch]);
@@ -117,7 +133,18 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
-    loadData(false);
+    setAppliedSearch(search.trim());
+  };
+
+  const handleClearSearch = () => {
+    setSearch('');
+    setAppliedSearch('');
+    setPage(1);
+  };
+
+  const handleApplySort = (next: GarantiaSortConfig) => {
+    setSortConfig(next);
+    setPage(1);
   };
 
   const handleConfirmLiberar = async () => {
@@ -230,9 +257,9 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
       </div>
 
       {/* Barra de Búsqueda Backend */}
-      <div className="bg-white p-2.5 rounded border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-        <form onSubmit={handleSearchSubmit} className="flex-1 flex items-center gap-2 max-w-xl">
-          <div className="relative flex-1">
+      <div className="bg-white p-2.5 rounded border border-slate-200 shadow-2xs flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2">
+        <form onSubmit={handleSearchSubmit} className="flex-1 flex flex-wrap items-center gap-2 max-w-2xl">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
             <input
               type="text"
@@ -242,28 +269,31 @@ export const GarantiasList: React.FC<GarantiasListProps> = ({ onNavigate, initia
               className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700"
             />
           </div>
-          <button
-            type="submit"
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded transition"
-          >
-            Buscar
-          </button>
-          {search && (
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              type="button"
-              onClick={() => {
-                setSearch('');
-                setPage(1);
-                loadData(false);
-              }}
-              className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+              type="submit"
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded transition cursor-pointer"
             >
-              Limpiar
+              Buscar
             </button>
-          )}
+            <OrdenarPorDropdown
+              value={sortConfig}
+              onApply={handleApplySort}
+              disabled={isLoading && !hasLoadedOnce}
+            />
+            {(search || appliedSearch) && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
         </form>
 
-        <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between sm:justify-end">
+        <div className="text-[11px] text-slate-600 flex items-center gap-2 justify-between lg:justify-end">
           {isRefreshing && (
             <span className="text-[11px] font-medium text-emerald-800 flex items-center gap-1">
               <RefreshCw className="w-3 h-3 animate-spin" /> Actualizando datos...

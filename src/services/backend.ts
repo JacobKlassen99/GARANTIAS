@@ -43,6 +43,13 @@ import {
   formatHectareas,
   matchesAnyField,
 } from '../utils/textSearch';
+import {
+  DEFAULT_GARANTIA_SORT,
+  GarantiaSortConfig,
+  isGarantiaSortField,
+  mapGarantiaSortFieldToBackendHeader,
+  sortGarantias,
+} from '../utils/garantiaSort';
 
 import {
   getFromMemoryCache,
@@ -263,9 +270,12 @@ export async function preloadDataInBackground(forceRefresh: boolean = false): Pr
     // Prioridad 5: Garantías Liberadas, Pendientes y Configuración
     try {
       await Promise.all([
-        listarGarantiasPendientes({ page: 1, pageSize: 200 }, forceRefresh).catch(() => null),
+        listarGarantiasPendientes(
+          { page: 1, pageSize: 200, sortField: DEFAULT_GARANTIA_SORT.field, sortDirection: DEFAULT_GARANTIA_SORT.direction },
+          forceRefresh
+        ).catch(() => null),
         listarGarantiasLiberadas(
-          { page: 1, pageSize: 200, sortField: 'fechaLiberacion', sortDirection: 'desc' },
+          { page: 1, pageSize: 200, sortField: DEFAULT_GARANTIA_SORT.field, sortDirection: DEFAULT_GARANTIA_SORT.direction },
           forceRefresh
         ).catch(() => null),
         getConfiguracion(forceRefresh).catch(() => null),
@@ -1577,12 +1587,41 @@ export const deleteCliente = eliminarCliente;
 /**
  * SERVICIOS DE LOTES
  */
+export interface TotalesLotesFiltrados {
+  cantidadLotes: number;
+  hectareasTotales: number;
+  hectareasEnGarantia: number;
+  hectareasDisponibles: number;
+  hectareasBloqueadas: number;
+}
+
+function normalizarFiltrosLotesParaBackend(filters?: Record<string, any>): Record<string, any> {
+  const normalized: Record<string, any> = {};
+  if (!filters) return normalized;
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === null || value === '' || value === 'todos') continue;
+    // Apps Script filtra la hoja 'lotes' por el encabezado exacto de columna ('Estado')
+    if (key.toLowerCase() === 'estado') {
+      normalized['Estado'] = value;
+    } else {
+      normalized[key] = value;
+    }
+  }
+  return normalized;
+}
+
 export async function listarLotes(
   params: QueryParams,
   forceRefresh: boolean = false
 ): Promise<PaginatedResponse<Lote>> {
+  const backendFilters = normalizarFiltrosLotesParaBackend(params.filters);
+  const cacheParams: QueryParams = {
+    ...params,
+    filters: Object.keys(backendFilters).length > 0 ? backendFilters : undefined,
+  };
+
   if (!forceRefresh) {
-    const cached = getFromMemoryCache<PaginatedResponse<Lote>>('lotes', params);
+    const cached = getFromMemoryCache<PaginatedResponse<Lote>>('lotes', cacheParams);
     if (cached) return cached;
   }
 
@@ -1590,7 +1629,7 @@ export async function listarLotes(
     page: params.page || 1,
     pageSize: params.pageSize || 200,
     search: params.search || '',
-    filters: params.filters || {},
+    filters: backendFilters,
     sort: params.sortField ? { field: params.sortField, direction: params.sortDirection || 'asc' } : {},
   });
 
@@ -1603,11 +1642,11 @@ export async function listarLotes(
     pageSize: res?.pageSize || params.pageSize || 200,
     total: typeof res?.total === 'number' ? res.total : items.length,
     totalPages: typeof res?.totalPages === 'number' ? res.totalPages : 1,
-    from: typeof res?.from === 'number' ? res.from : (params.page - 1) * 200 + 1,
-    to: typeof res?.to === 'number' ? res.to : Math.min(params.page * 200, items.length),
+    from: typeof res?.from === 'number' ? res.from : items.length > 0 ? ((params.page || 1) - 1) * (params.pageSize || 200) + 1 : 0,
+    to: typeof res?.to === 'number' ? res.to : Math.min((params.page || 1) * (params.pageSize || 200), typeof res?.total === 'number' ? res.total : items.length),
   };
 
-  setToMemoryCache('lotes', paginatedResult, params);
+  setToMemoryCache('lotes', paginatedResult, cacheParams);
   return paginatedResult;
 }
 
@@ -1634,6 +1673,192 @@ export async function obtenerLotes(forceRefresh: boolean = false): Promise<Lote[
     }
     setToMemoryCache('lotes', allLotes, 'all');
     return allLotes;
+  });
+}
+
+export function getTotalesLotesFiltradosCacheKey(search?: string, estado?: string): string {
+  const cleanSearch = (search || '').trim().toLowerCase();
+  const cleanEstado = estado && estado !== 'todos' ? estado.trim().toLowerCase() : '';
+  return `totals:${cleanSearch}|${cleanEstado}`;
+}
+
+/**
+ * Calcula los totales reales de hectáreas para TODOS los lotes que coinciden con
+ * la búsqueda y el filtro de estado aplicados (incluyendo resultados multipágina).
+ * Reutiliza la caché en RAM y las páginas ya descargadas para evitar solicitudes innecesarias.
+ */
+export async function obtenerTotalesLotesFiltrados(
+  params: {
+    search?: string;
+    estado?: string;
+    pageSize?: number;
+    currentPageResult?: PaginatedResponse<Lote>;
+  },
+  forceRefresh: boolean = false
+): Promise<TotalesLotesFiltrados> {
+  const cleanSearch = (params.search || '').trim();
+  const cleanEstado = params.estado && params.estado !== 'todos' ? params.estado.trim() : '';
+  const cacheKey = getTotalesLotesFiltradosCacheKey(cleanSearch, cleanEstado);
+
+  if (!forceRefresh) {
+    const cached = getFromMemoryCache<TotalesLotesFiltrados>('lotes', cacheKey);
+    if (cached) return cached;
+  }
+
+  const dedupKey = `obtenerTotalesLotesFiltrados:${cacheKey}:${forceRefresh ? 'refresh' : 'cache'}`;
+  return fetchWithDeduplication<TotalesLotesFiltrados>(dedupKey, async () => {
+    const pageResult = params.currentPageResult;
+    const pageSize = pageResult?.pageSize || params.pageSize || 200;
+
+    // Caso 1: Todos los resultados filtrados caben en la página ya cargada (0 peticiones extra)
+    if (pageResult && pageResult.totalPages <= 1) {
+      const resumen = calcularResumenHectareasLotes(pageResult.data || []);
+      const totales: TotalesLotesFiltrados = {
+        cantidadLotes: (pageResult.data || []).length,
+        hectareasTotales: resumen.hectareasTotales,
+        hectareasEnGarantia: resumen.hectareasEnGarantia,
+        hectareasDisponibles: resumen.hectareasDisponibles,
+        hectareasBloqueadas: resumen.hectareasBloqueadas,
+      };
+      setToMemoryCache('lotes', totales, cacheKey);
+      return totales;
+    }
+
+    // Caso 2: Sin búsqueda de texto (todos los lotes o filtro solo por Estado)
+    // Reutiliza el catálogo completo en RAM (compartido con el Dashboard) sin descargas duplicadas
+    if (!cleanSearch) {
+      const allLotes = await obtenerLotes(forceRefresh);
+      const filtered = cleanEstado
+        ? allLotes.filter(
+            (l) => String(l.estado || 'Disponible').trim().toLowerCase() === cleanEstado.toLowerCase()
+          )
+        : allLotes;
+
+      if (!pageResult || filtered.length === pageResult.total) {
+        const resumen = calcularResumenHectareasLotes(filtered);
+        const totales: TotalesLotesFiltrados = {
+          cantidadLotes: filtered.length,
+          hectareasTotales: resumen.hectareasTotales,
+          hectareasEnGarantia: resumen.hectareasEnGarantia,
+          hectareasDisponibles: resumen.hectareasDisponibles,
+          hectareasBloqueadas: resumen.hectareasBloqueadas,
+        };
+        setToMemoryCache('lotes', totales, cacheKey);
+        return totales;
+      }
+    }
+
+    // Caso 3: Búsqueda activa con múltiples páginas — intentar verificar contra catálogo en RAM primero
+    if (!forceRefresh && pageResult) {
+      const allCached = getFromMemoryCache<Lote[]>('lotes', 'all');
+      if (allCached && allCached.length > 0) {
+        const localMatches = allCached.filter((l) => {
+          if (
+            cleanEstado &&
+            String(l.estado || 'Disponible').trim().toLowerCase() !== cleanEstado.toLowerCase()
+          ) {
+            return false;
+          }
+          if (!cleanSearch) return true;
+          return matchesAnyField(
+            l,
+            [
+              'numeroLote',
+              'propietario',
+              'cuentaPropietario',
+              'encargado',
+              'cuentaEncargado',
+              'ubicacion',
+              'observacion',
+            ],
+            cleanSearch
+          );
+        });
+
+        const localIds = new Set(localMatches.map((l) => String(l.idLote)));
+        const currentPageMatchesLocal =
+          localMatches.length === pageResult.total &&
+          (pageResult.data || []).every((l) => localIds.has(String(l.idLote)));
+
+        if (currentPageMatchesLocal) {
+          const resumen = calcularResumenHectareasLotes(localMatches);
+          const totales: TotalesLotesFiltrados = {
+            cantidadLotes: localMatches.length,
+            hectareasTotales: resumen.hectareasTotales,
+            hectareasEnGarantia: resumen.hectareasEnGarantia,
+            hectareasDisponibles: resumen.hectareasDisponibles,
+            hectareasBloqueadas: resumen.hectareasBloqueadas,
+          };
+          setToMemoryCache('lotes', totales, cacheKey);
+          return totales;
+        }
+      }
+    }
+
+    // Caso 4: Fallback exacto — descargar únicamente las páginas faltantes del filtro actual
+    // (cada página se almacena en caché RAM para acelerar también la navegación de paginación)
+    const filters = cleanEstado ? { Estado: cleanEstado } : undefined;
+    const basePage =
+      pageResult ||
+      (await listarLotes(
+        {
+          page: 1,
+          pageSize,
+          search: cleanSearch || undefined,
+          filters,
+        },
+        forceRefresh
+      ));
+
+    const totalPages = Math.max(1, basePage.totalPages || 1);
+    const pageDataByNumber = new Map<number, Lote[]>();
+    pageDataByNumber.set(basePage.page || 1, basePage.data || []);
+
+    const missingPages: Promise<{ pageNum: number; data: Lote[] }>[] = [];
+    for (let p = 1; p <= totalPages; p++) {
+      if (pageDataByNumber.has(p)) continue;
+      missingPages.push(
+        listarLotes(
+          {
+            page: p,
+            pageSize,
+            search: cleanSearch || undefined,
+            filters,
+          },
+          forceRefresh
+        ).then((r) => ({ pageNum: p, data: r.data || [] }))
+      );
+    }
+
+    if (missingPages.length > 0) {
+      const results = await Promise.all(missingPages);
+      for (const r of results) {
+        pageDataByNumber.set(r.pageNum, r.data);
+      }
+    }
+
+    const seenIds = new Set<string>();
+    const allFiltered: Lote[] = [];
+    for (let p = 1; p <= totalPages; p++) {
+      const items = pageDataByNumber.get(p) || [];
+      for (const item of items) {
+        const key = String(item.idLote || `${item.numeroLote}-${item.cuentaPropietario}`);
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
+        allFiltered.push(item);
+      }
+    }
+
+    const resumen = calcularResumenHectareasLotes(allFiltered);
+    const totales: TotalesLotesFiltrados = {
+      cantidadLotes: allFiltered.length,
+      hectareasTotales: resumen.hectareasTotales,
+      hectareasEnGarantia: resumen.hectareasEnGarantia,
+      hectareasDisponibles: resumen.hectareasDisponibles,
+      hectareasBloqueadas: resumen.hectareasBloqueadas,
+    };
+    setToMemoryCache('lotes', totales, cacheKey);
+    return totales;
   });
 }
 
@@ -1933,41 +2158,148 @@ export const setBienBloqueo = async (
 /**
  * SERVICIOS DE GARANTÍAS
  */
+function resolveGarantiaSortConfig(params: QueryParams): GarantiaSortConfig {
+  const field = isGarantiaSortField(params.sortField)
+    ? params.sortField
+    : DEFAULT_GARANTIA_SORT.field;
+  const direction = params.sortDirection === 'asc' ? 'asc' : 'desc';
+  return { field, direction };
+}
+
+function buildFilteredPoolCacheKey(search?: string, filters?: Record<string, any>): string {
+  const cleanSearch = (search || '').trim().toLowerCase();
+  const hasFilters = filters && Object.keys(filters).length > 0;
+  if (!cleanSearch && !hasFilters) return 'all';
+  const filtersStr = hasFilters
+    ? Object.keys(filters!)
+        .sort()
+        .map((k) => `${k}=${String(filters![k])}`)
+        .join('&')
+    : '';
+  return `all-filtered:${cleanSearch}|${filtersStr}`;
+}
+
+function buildPaginatedSlice<T>(
+  sortedItems: T[],
+  page: number,
+  pageSize: number
+): PaginatedResponse<T> {
+  const total = sortedItems.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const pageData = sortedItems.slice(startIdx, startIdx + pageSize);
+
+  return {
+    data: pageData,
+    page: safePage,
+    pageSize,
+    total,
+    totalPages,
+    from: pageData.length > 0 ? startIdx + 1 : 0,
+    to: pageData.length > 0 ? startIdx + pageData.length : 0,
+  };
+}
+
 export async function listarGarantias(
   params: QueryParams,
   forceRefresh: boolean = false
 ): Promise<PaginatedResponse<Garantia>> {
+  const page = params.page || 1;
+  const pageSize = params.pageSize || 200;
+  const cleanSearch = (params.search || '').trim();
+  const sortConfig = resolveGarantiaSortConfig(params);
+
+  const cacheParams: QueryParams = {
+    ...params,
+    page,
+    pageSize,
+    search: cleanSearch || undefined,
+    sortField: sortConfig.field,
+    sortDirection: sortConfig.direction,
+  };
+
   if (!forceRefresh) {
-    const cached = getFromMemoryCache<PaginatedResponse<Garantia>>('garantias', params);
+    const cached = getFromMemoryCache<PaginatedResponse<Garantia>>('garantias', cacheParams);
     if (cached) return cached;
   }
 
-  const res = await callAppsScript<any>('listarGarantias', {
-    page: params.page || 1,
-    pageSize: params.pageSize || 200,
-    search: params.search || '',
-    filters: params.filters || {},
-    sort: params.sortField ? { field: params.sortField, direction: params.sortDirection || 'asc' } : {},
-  });
+  const poolKey = buildFilteredPoolCacheKey(cleanSearch, params.filters);
 
-  const rawItems = Array.isArray(res?.items) ? res.items : Array.isArray(res) ? res : [];
-  // Garantías activas: excluir explícitamente pendientes o liberadas; conservar Activa y registros históricos sin columna estado
-  const items = rawItems.map(normalizarGarantia).filter((g: Garantia) => {
-    const st = String(g.estadoGarantia || '').trim().toLowerCase();
-    return !st || st === 'activa' || st === 'activo';
-  });
+  // Reutilizar el conjunto filtrado completo en RAM si ya fue descargado (0 peticiones al reordenar o cambiar página)
+  if (!forceRefresh) {
+    const cachedPool = getFromMemoryCache<Garantia[]>('garantias', poolKey);
+    if (cachedPool) {
+      const sorted = sortGarantias(cachedPool, sortConfig);
+      const paginated = buildPaginatedSlice(sorted, page, pageSize);
+      setToMemoryCache('garantias', paginated, cacheParams);
+      return paginated;
+    }
+  }
 
-  const paginatedResult: PaginatedResponse<Garantia> = {
-    data: items,
-    page: res?.page || params.page || 1,
-    pageSize: res?.pageSize || params.pageSize || 200,
-    total: typeof res?.total === 'number' ? res.total : items.length,
-    totalPages: typeof res?.totalPages === 'number' ? res.totalPages : 1,
-    from: typeof res?.from === 'number' ? res.from : (params.page - 1) * 200 + 1,
-    to: typeof res?.to === 'number' ? res.to : Math.min(params.page * 200, items.length),
+  const backendSort = {
+    field: mapGarantiaSortFieldToBackendHeader(sortConfig.field),
+    direction: sortConfig.direction,
   };
 
-  setToMemoryCache('garantias', paginatedResult, params);
+  const normalizeActivePage = (res: any): Garantia[] => {
+    const rawItems = Array.isArray(res?.items) ? res.items : Array.isArray(res) ? res : [];
+    // Garantías activas: excluir explícitamente pendientes o liberadas; conservar Activa y registros históricos sin columna estado
+    return rawItems.map(normalizarGarantia).filter((g: Garantia) => {
+      const st = String(g.estadoGarantia || '').trim().toLowerCase();
+      return !st || st === 'activa' || st === 'activo';
+    });
+  };
+
+  const fetchPoolDedupKey = `garantias-pool:${poolKey}:${forceRefresh ? 'refresh' : 'cache'}`;
+  const allFiltered = await fetchWithDeduplication<Garantia[]>(fetchPoolDedupKey, async () => {
+    const firstRes = await callAppsScript<any>('listarGarantias', {
+      page: 1,
+      pageSize,
+      search: cleanSearch,
+      filters: params.filters || {},
+      sort: backendSort,
+    });
+
+    let combined = normalizeActivePage(firstRes);
+    const totalPages = typeof firstRes?.totalPages === 'number' ? firstRes.totalPages : 1;
+
+    if (totalPages > 1) {
+      const remaining = [];
+      for (let p = 2; p <= totalPages; p++) {
+        remaining.push(
+          callAppsScript<any>('listarGarantias', {
+            page: p,
+            pageSize,
+            search: cleanSearch,
+            filters: params.filters || {},
+            sort: backendSort,
+          })
+        );
+      }
+      const restResults = await Promise.all(remaining);
+      for (const r of restResults) {
+        combined = combined.concat(normalizeActivePage(r));
+      }
+    }
+
+    const seen = new Set<string>();
+    const deduped: Garantia[] = [];
+    for (const item of combined) {
+      const key = String(item.idGarantia || `${item.numeroSolicitud}-${item.fecha}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(item);
+    }
+
+    setToMemoryCache('garantias', deduped, poolKey);
+    return deduped;
+  });
+
+  const sortedAll = sortGarantias(allFiltered, sortConfig);
+  const paginatedResult = buildPaginatedSlice(sortedAll, page, pageSize);
+
+  setToMemoryCache('garantias', paginatedResult, cacheParams);
   return paginatedResult;
 }
 
@@ -1975,74 +2307,130 @@ export async function listarGarantiasPendientes(
   params: QueryParams,
   forceRefresh: boolean = false
 ): Promise<PaginatedResponse<Garantia>> {
+  const page = params.page || 1;
+  const pageSize = params.pageSize || 200;
+  const cleanSearch = (params.search || '').trim();
+  const sortConfig = resolveGarantiaSortConfig(params);
+
+  const cacheParams: QueryParams = {
+    ...params,
+    page,
+    pageSize,
+    search: cleanSearch || undefined,
+    sortField: sortConfig.field,
+    sortDirection: sortConfig.direction,
+  };
+
   if (!forceRefresh) {
-    const cached = getFromMemoryCache<PaginatedResponse<Garantia>>('garantias-pendientes', params);
+    const cached = getFromMemoryCache<PaginatedResponse<Garantia>>('garantias-pendientes', cacheParams);
     if (cached) return cached;
   }
 
-  const res = await callAppsScript<any>('listarGarantiasPendientes', {
-    page: params.page || 1,
-    pageSize: params.pageSize || 200,
-    search: params.search || '',
-    filters: params.filters || {},
-    sort: params.sortField ? { field: params.sortField, direction: params.sortDirection || 'desc' } : {},
-  });
+  const poolKey = buildFilteredPoolCacheKey(cleanSearch, params.filters);
 
-  const rawItems = Array.isArray(res?.items)
-    ? res.items
-    : Array.isArray(res?.data)
-    ? res.data
-    : Array.isArray(res)
-    ? res
-    : [];
-
-  let items: Garantia[] = rawItems.map((raw: any) => {
-    const norm = normalizarGarantia(raw);
-    return {
-      ...norm,
-      estadoGarantia: norm.estadoGarantia || 'Pendiente',
-    };
-  });
-
-  if (params.search && params.search.trim()) {
-    const q = params.search.trim();
-    items = items.filter((g: Garantia) =>
-      matchesAnyField(
-        g,
-        [
-          'numeroSolicitud',
-          'propietario',
-          'prestatario',
-          'cuentaPropietario',
-          'cuentaPrestatario',
-          'garantiaConNombre',
-          'tipoGarantia',
-          'lotesResumen',
-          'polizasResumen',
-        ],
-        q
-      )
-    );
+  if (!forceRefresh) {
+    const cachedPool = getFromMemoryCache<Garantia[]>('garantias-pendientes', poolKey);
+    if (cachedPool) {
+      const sorted = sortGarantias(cachedPool, sortConfig);
+      const paginated = buildPaginatedSlice(sorted, page, pageSize);
+      setToMemoryCache('garantias-pendientes', paginated, cacheParams);
+      return paginated;
+    }
   }
 
-  const pageSize = params.pageSize || 200;
-  const total = typeof res?.total === 'number' ? res.total : items.length;
-  const totalPages =
-    typeof res?.totalPages === 'number'
-      ? res.totalPages
-      : Math.max(1, Math.ceil(total / pageSize));
-
-  const paginatedResult: PaginatedResponse<Garantia> = {
-    data: items,
-    page: res?.page || params.page || 1,
-    pageSize,
-    total,
-    totalPages,
-    from: typeof res?.from === 'number' ? res.from : items.length > 0 ? ((params.page || 1) - 1) * pageSize + 1 : 0,
-    to: typeof res?.to === 'number' ? res.to : Math.min((params.page || 1) * pageSize, total),
+  const backendSort = {
+    field: mapGarantiaSortFieldToBackendHeader(sortConfig.field),
+    direction: sortConfig.direction,
   };
 
-  setToMemoryCache('garantias-pendientes', paginatedResult, params);
+  const normalizePendingPage = (res: any): Garantia[] => {
+    const rawItems = Array.isArray(res?.items)
+      ? res.items
+      : Array.isArray(res?.data)
+      ? res.data
+      : Array.isArray(res)
+      ? res
+      : [];
+
+    let items: Garantia[] = rawItems.map((raw: any) => {
+      const norm = normalizarGarantia(raw);
+      return {
+        ...norm,
+        estadoGarantia: norm.estadoGarantia || 'Pendiente',
+      };
+    });
+
+    if (cleanSearch) {
+      items = items.filter((g: Garantia) =>
+        matchesAnyField(
+          g,
+          [
+            'numeroSolicitud',
+            'propietario',
+            'prestatario',
+            'cuentaPropietario',
+            'cuentaPrestatario',
+            'garantiaConNombre',
+            'tipoGarantia',
+            'lotesResumen',
+            'polizasResumen',
+          ],
+          cleanSearch
+        )
+      );
+    }
+    return items;
+  };
+
+  const fetchPoolDedupKey = `garantias-pendientes-pool:${poolKey}:${forceRefresh ? 'refresh' : 'cache'}`;
+  const allFiltered = await fetchWithDeduplication<Garantia[]>(fetchPoolDedupKey, async () => {
+    const firstRes = await callAppsScript<any>('listarGarantiasPendientes', {
+      page: 1,
+      pageSize,
+      search: cleanSearch,
+      filters: params.filters || {},
+      sort: backendSort,
+    });
+
+    let combined = normalizePendingPage(firstRes);
+    const totalPages = typeof firstRes?.totalPages === 'number' ? firstRes.totalPages : 1;
+
+    if (totalPages > 1) {
+      const remaining = [];
+      for (let p = 2; p <= totalPages; p++) {
+        remaining.push(
+          callAppsScript<any>('listarGarantiasPendientes', {
+            page: p,
+            pageSize,
+            search: cleanSearch,
+            filters: params.filters || {},
+            sort: backendSort,
+          })
+        );
+      }
+      const restResults = await Promise.all(remaining);
+      for (const r of restResults) {
+        combined = combined.concat(normalizePendingPage(r));
+      }
+    }
+
+    const seen = new Set<string>();
+    const deduped: Garantia[] = [];
+    for (const item of combined) {
+      const key = String(item.idGarantia || `${item.numeroSolicitud}-${item.fecha}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(item);
+    }
+
+    setToMemoryCache('garantias-pendientes', deduped, poolKey);
+    return deduped;
+  });
+
+  const sortedAll = sortGarantias(allFiltered, sortConfig);
+  const paginatedResult = buildPaginatedSlice(sortedAll, page, pageSize);
+
+  setToMemoryCache('garantias-pendientes', paginatedResult, cacheParams);
   return paginatedResult;
 }
 
@@ -2855,6 +3243,78 @@ export async function eliminarGarantia(idGarantia: string, password: string): Pr
   return result;
 }
 
+const eliminacionesPendientesEnCurso = new Set<string>();
+
+/**
+ * Elimina definitivamente una garantía en estado Pendiente utilizando la acción
+ * existente `eliminarGarantia` de Google Apps Script.
+ * - Comprueba en el servidor (sin caché) que la garantía sigue existiendo y que
+ *   su estado actual es exactamente `Pendiente` antes de solicitar la eliminación.
+ * - Envía `idGarantia`, `password` y el indicador `soloPendiente: true` para que
+ *   Apps Script también pueda reforzar la restricción del lado del servidor.
+ * - Evita ejecuciones concurrentes duplicadas para el mismo `idGarantia`.
+ * - Invalida todos los cachés de garantías, lotes, bienes, dashboard y detalles.
+ */
+export async function eliminarGarantiaPendiente(
+  idGarantia: string,
+  password: string
+): Promise<any> {
+  const cleanId = String(idGarantia || '').trim();
+  const cleanPassword = String(password || '').trim();
+
+  if (!cleanId) {
+    throw new Error('El ID de la garantía pendiente es requerido.');
+  }
+  if (!cleanPassword) {
+    throw new Error('La contraseña de administrador es requerida.');
+  }
+  if (eliminacionesPendientesEnCurso.has(cleanId)) {
+    throw new Error('Ya hay una eliminación en curso para esta garantía pendiente.');
+  }
+
+  eliminacionesPendientesEnCurso.add(cleanId);
+  try {
+    // 1. Verificar estado real actualizado directamente en Google Sheets (sin caché)
+    const garantiaActual = await obtenerGarantiaCompleta(cleanId, true);
+    if (!garantiaActual || String(garantiaActual.idGarantia || '').trim() !== cleanId) {
+      throw new Error('La garantía pendiente seleccionada ya no existe en el registro.');
+    }
+
+    const estadoActual = String(garantiaActual.estadoGarantia || '').trim().toLowerCase();
+    if (estadoActual !== 'pendiente') {
+      const estadoVisible = garantiaActual.estadoGarantia || 'Activa';
+      throw new Error(
+        `No se puede eliminar esta garantía desde Garantías pendientes porque su estado actual es "${estadoVisible}".`
+      );
+    }
+
+    // 2. Ejecutar la eliminación definitiva mediante la acción existente eliminarGarantia
+    const result = await callAppsScript('eliminarGarantia', {
+      idGarantia: cleanId,
+      password: cleanPassword,
+      soloPendiente: true,
+    });
+
+    // 3. Invalidar cachés de garantías, disponibilidad de lotes/bienes y estadísticas
+    invalidarMapaCompromisosLotes();
+    invalidateMemoryCache([
+      'garantias-pendientes',
+      'garantias',
+      'garantias-liberadas',
+      'lotes',
+      'bienes',
+      'dashboard',
+      'estadisticas_panel',
+      'reportes',
+      'client-detail',
+    ]);
+
+    return result;
+  } finally {
+    eliminacionesPendientesEnCurso.delete(cleanId);
+  }
+}
+
 /**
  * SERVICIOS DE HISTORIAL DE GARANTÍAS LIBERADAS
  */
@@ -2862,72 +3322,121 @@ export async function listarGarantiasLiberadas(
   params: QueryParams,
   forceRefresh: boolean = false
 ): Promise<PaginatedResponse<GarantiaLiberada>> {
+  const page = params.page || 1;
+  const pageSize = params.pageSize || 200;
+  const cleanSearch = (params.search || '').trim();
+  const sortConfig = resolveGarantiaSortConfig(params);
+
+  const cacheParams: QueryParams = {
+    ...params,
+    page,
+    pageSize,
+    search: cleanSearch || undefined,
+    sortField: sortConfig.field,
+    sortDirection: sortConfig.direction,
+  };
+
   if (!forceRefresh) {
-    const cached = getFromMemoryCache<PaginatedResponse<GarantiaLiberada>>('garantias-liberadas', params);
+    const cached = getFromMemoryCache<PaginatedResponse<GarantiaLiberada>>('garantias-liberadas', cacheParams);
     if (cached) return cached;
   }
 
-  const res = await callAppsScript<any>('listarGarantiasLiberadas', {
-    page: params.page || 1,
-    pageSize: params.pageSize || 200,
-    search: params.search || '',
-    filters: params.filters || {},
-    sort: params.sortField
-      ? { field: params.sortField, direction: params.sortDirection || 'desc' }
-      : { field: 'fechaLiberacion', direction: 'desc' },
-  });
+  const poolKey = buildFilteredPoolCacheKey(cleanSearch, params.filters);
 
-  const rawItems = Array.isArray(res?.items) ? res.items : Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
-  let items: GarantiaLiberada[] = rawItems.map(normalizarGarantiaLiberada);
-
-  // Filtro de respaldo si el backend no procesó la búsqueda
-  if (params.search && params.search.trim()) {
-    const q = params.search.trim();
-    items = items.filter((g: GarantiaLiberada) =>
-      matchesAnyField(
-        g,
-        [
-          'numeroSolicitud',
-          'propietario',
-          'prestatario',
-          'cuentaPropietario',
-          'cuentaPrestatario',
-          'garantiaConNombre',
-          'tipoGarantia',
-        ],
-        q
-      )
-    );
+  if (!forceRefresh) {
+    const cachedPool = getFromMemoryCache<GarantiaLiberada[]>('garantias-liberadas', poolKey);
+    if (cachedPool) {
+      const sorted = sortGarantias(cachedPool, sortConfig);
+      const paginated = buildPaginatedSlice(sorted, page, pageSize);
+      setToMemoryCache('garantias-liberadas', paginated, cacheParams);
+      return paginated;
+    }
   }
 
-  // Ordenar inicialmente por fecha de liberación (más recientes primero)
-  items.sort((a: GarantiaLiberada, b: GarantiaLiberada) => {
-    const timeA = new Date(a.fechaLiberacion || a.fecha || 0).getTime();
-    const timeB = new Date(b.fechaLiberacion || b.fecha || 0).getTime();
-    if (isNaN(timeA) || isNaN(timeB)) {
-      return (b.fechaLiberacion || '').localeCompare(a.fechaLiberacion || '');
-    }
-    return timeB - timeA;
-  });
-
-  const total = typeof res?.total === 'number' ? res.total : items.length;
-  const pageSize = params.pageSize || 200;
-  const totalPages =
-    typeof res?.totalPages === 'number'
-      ? res.totalPages
-      : Math.max(1, Math.ceil(total / pageSize));
-
-  const paginatedResult: PaginatedResponse<GarantiaLiberada> = {
-    data: items,
-    page: res?.page || params.page || 1,
-    pageSize,
-    total,
-    totalPages,
-    from: typeof res?.from === 'number' ? res.from : ((params.page || 1) - 1) * pageSize + 1,
-    to: typeof res?.to === 'number' ? res.to : Math.min((params.page || 1) * pageSize, total),
+  const backendSort = {
+    field: mapGarantiaSortFieldToBackendHeader(sortConfig.field),
+    direction: sortConfig.direction,
   };
 
-  setToMemoryCache('garantias-liberadas', paginatedResult, params);
+  const normalizeReleasedPage = (res: any): GarantiaLiberada[] => {
+    const rawItems = Array.isArray(res?.items)
+      ? res.items
+      : Array.isArray(res?.data)
+      ? res.data
+      : Array.isArray(res)
+      ? res
+      : [];
+    let items: GarantiaLiberada[] = rawItems.map(normalizarGarantiaLiberada);
+
+    if (cleanSearch) {
+      items = items.filter((g: GarantiaLiberada) =>
+        matchesAnyField(
+          g,
+          [
+            'numeroSolicitud',
+            'propietario',
+            'prestatario',
+            'cuentaPropietario',
+            'cuentaPrestatario',
+            'garantiaConNombre',
+            'tipoGarantia',
+          ],
+          cleanSearch
+        )
+      );
+    }
+    return items;
+  };
+
+  const fetchPoolDedupKey = `garantias-liberadas-pool:${poolKey}:${forceRefresh ? 'refresh' : 'cache'}`;
+  const allFiltered = await fetchWithDeduplication<GarantiaLiberada[]>(fetchPoolDedupKey, async () => {
+    const firstRes = await callAppsScript<any>('listarGarantiasLiberadas', {
+      page: 1,
+      pageSize,
+      search: cleanSearch,
+      filters: params.filters || {},
+      sort: backendSort,
+    });
+
+    let combined = normalizeReleasedPage(firstRes);
+    const totalPages = typeof firstRes?.totalPages === 'number' ? firstRes.totalPages : 1;
+
+    if (totalPages > 1) {
+      const remaining = [];
+      for (let p = 2; p <= totalPages; p++) {
+        remaining.push(
+          callAppsScript<any>('listarGarantiasLiberadas', {
+            page: p,
+            pageSize,
+            search: cleanSearch,
+            filters: params.filters || {},
+            sort: backendSort,
+          })
+        );
+      }
+      const restResults = await Promise.all(remaining);
+      for (const r of restResults) {
+        combined = combined.concat(normalizeReleasedPage(r));
+      }
+    }
+
+    const seen = new Set<string>();
+    const deduped: GarantiaLiberada[] = [];
+    for (const item of combined) {
+      const key = String(item.idLiberacion || item.idGarantia || `${item.numeroSolicitud}-${item.fecha}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(item);
+    }
+
+    setToMemoryCache('garantias-liberadas', deduped, poolKey);
+    return deduped;
+  });
+
+  const sortedAll = sortGarantias(allFiltered, sortConfig);
+  const paginatedResult = buildPaginatedSlice(sortedAll, page, pageSize);
+
+  setToMemoryCache('garantias-liberadas', paginatedResult, cacheParams);
   return paginatedResult;
 }
 
